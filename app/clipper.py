@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from . import captions, llm, render, scenes, sfx, story, titles, tools
+from . import captions, llm, render, resources, scenes, sfx, story, titles, tools
 from .config import CLIPS
 from .recorder import SEG_SECONDS
 
@@ -48,9 +48,26 @@ def list_clips():
     return out
 
 
+def _score(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 99.0  # manual clips
+
+
 def submit(streamer, moment: dict, settings, manual=False):
     job_id = datetime.now().strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4]
     with _jobs_lock:
+        waiting = [j for j in jobs.values() if j["state"] not in ("done", "failed", "skipped")]
+        if not manual and len(waiting) >= settings["max_queue"]:
+            weakest = min((_score(j.get("score")) for j in waiting), default=0)
+            if _score(moment.get("score")) <= weakest:
+                log.info("%s: queue full (%d clips waiting), weaker moment skipped",
+                         streamer.channel_name, len(waiting))
+                jobs[job_id] = {"id": job_id, "streamer": streamer.channel_name, "platform": streamer.platform,
+                                "state": "skipped", "score": moment.get("score"), "ended": time.time(),
+                                "error": f"queue full ({len(waiting)} clips waiting), stronger moments first"}
+                return job_id
         jobs[job_id] = {"id": job_id, "streamer": streamer.channel_name, "platform": streamer.platform,
                         "state": "waiting for video", "score": moment.get("score"), "error": None}
     t = threading.Thread(target=_process, args=(job_id, streamer, moment, settings, manual),
@@ -140,7 +157,14 @@ def _process(job_id, streamer, moment, settings, manual):
         ff = tools.ffmpeg()
         enc = tools.video_encoder()
 
+        _set(job_id, state="queued (one clip is processed at a time)")
         with _heavy:
+            free = resources.wait_for_memory(
+                settings["min_free_ram_mb"],
+                lambda mb: _set(job_id, state=f"waiting for free memory ({mb / 1024:.1f} GB free)"))
+            if free is not None and free < settings["min_free_ram_mb"]:
+                log.warning("still only %d MB free after waiting, trying anyway", free)
+            low = settings["low_memory"]
             full = out_dir / "full.mp4"
             tools.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{offset:.2f}", "-i", str(src),
                        "-t", f"{duration:.2f}", "-map", "0:v:0", "-map", "0:a:0?", *enc,
@@ -149,6 +173,8 @@ def _process(job_id, streamer, moment, settings, manual):
 
             _set(job_id, state="captioning")
             try:
+                if low:
+                    llm.unload(settings)  # Whisper and the AI model take turns on the 8 GB GPU
                 words, lang = captions.transcribe(full, settings)
             except Exception as e:  # noqa: BLE001 - a clip without captions is better than none
                 log.warning("captions failed: %s", e)
@@ -168,7 +194,10 @@ def _process(job_id, streamer, moment, settings, manual):
             scenes_found = []
             if settings["vision"]:
                 _set(job_id, state="watching the clip (AI vision)")
-                frames = scenes.extract_frames(full, scenes.key_times(moments, duration), out_dir)
+                if low:
+                    captions.unload()
+                frames = scenes.extract_frames(full, scenes.key_times(moments, duration, 4 if low else 6),
+                                               out_dir, 640 if low else 768)
                 scenes_found = scenes.describe(settings, frames, topic, streamer.channel_name)
                 for _, f in frames:
                     f.unlink(missing_ok=True)
@@ -189,6 +218,9 @@ def _process(job_id, streamer, moment, settings, manual):
                 "max_sfx": settings["max_sfx"], "saw_video": bool(scenes_found),
             })
             (out_dir / "ai_debug.txt").write_text(llm.take_debug() or "(AI not used)", encoding="utf-8")
+            if low:
+                captions.unload()
+                llm.unload(settings)  # free the GPU and RAM for the render
             ai_sounds = meta_text.pop("sounds", None)
             ai_window = meta_text.pop("window", None)
 

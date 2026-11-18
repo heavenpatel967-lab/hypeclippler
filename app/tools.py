@@ -51,9 +51,29 @@ def video_encoder() -> list[str]:
     return ["-c:v", "libx264", "-preset", "faster", "-crf", "19", "-profile:v", "high"]
 
 
-def run(cmd, timeout=600, cwd=None):
-    p = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
-                       timeout=timeout, cwd=cwd, creationflags=NO_WINDOW)
-    if p.returncode != 0:
-        raise RuntimeError(f"{Path(cmd[0]).name} failed: {p.stderr.strip()[-800:]}")
-    return p
+def run(cmd, timeout=600, cwd=None, attempts=4):
+    """Runs a command. If Windows is out of memory (WinError 8) it waits and tries again
+    instead of failing the clip."""
+    import gc
+    import time
+    from .resources import is_oom
+    for i in range(attempts):
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
+                               timeout=timeout, cwd=cwd, creationflags=NO_WINDOW)
+        except OSError as e:
+            if not is_oom(e) or i == attempts - 1:
+                raise RuntimeError(f"{Path(cmd[0]).name} could not start: {e}") from e
+            log.warning("out of memory starting %s, retrying in %ds", Path(cmd[0]).name, 15 * (i + 1))
+            gc.collect()
+            time.sleep(15 * (i + 1))
+            continue
+        if p.returncode != 0:
+            err = p.stderr.strip()[-800:]
+            if is_oom(err) and i < attempts - 1:
+                log.warning("%s ran out of memory, retrying in %ds", Path(cmd[0]).name, 15 * (i + 1))
+                gc.collect()
+                time.sleep(15 * (i + 1))
+                continue
+            raise RuntimeError(f"{Path(cmd[0]).name} failed: {err}")
+        return p

@@ -54,6 +54,15 @@ def _load(settings, force_cpu=False):
     raise RuntimeError(f"could not load whisper: {last}")
 
 
+def unload():
+    """Frees Whisper's GPU/RAM memory (it reloads in a few seconds next time)."""
+    global _model, _model_name
+    with _lock:
+        _model, _model_name = None, None
+    import gc
+    gc.collect()
+
+
 def transcribe(media: Path, settings) -> tuple[list[dict], str]:
     """Returns (words, language). words = [{"start", "end", "word"}]."""
     global _model

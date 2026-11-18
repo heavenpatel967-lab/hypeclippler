@@ -199,7 +199,8 @@ async function refresh() {
     const el = cardFor(s);
     el.classList.toggle("hype", s.in_hype);
     el.querySelector(".dot").classList.toggle("live", s.live);
-    el.querySelector(".status").textContent = `video: ${s.video_status} · chat: ${s.chat_status}`;
+    el.querySelector(".status").textContent = `video: ${s.video_status} (${(s.quality || "").split(",")[0]}) · chat: ${s.chat_status}`
+      + (s.video_gaps > 4 ? ` · ⚠ ${s.video_gaps}s of video dropped in the last 2 min (internet or PC too slow: watch fewer streamers)` : "");
     el.querySelector(".meter div").style.width = Math.min(100, s.hype_level / sensitivity * 100) + "%";
     el.querySelector(".speed").textContent = s.warming_up ? `learning normal chat speed... (${s.rate}/s)` :
       `${s.rate}/s now · ${s.baseline}/s normal · ${s.hype_level}x` + (s.in_hype ? " · HYPE!" : "");
@@ -253,11 +254,13 @@ const SETTINGS = [
   ["pre_seconds", "Seconds before peak"], ["post_seconds", "Seconds after peak"],
   ["sensitivity", "Sensitivity (x normal chat speed, lower = more clips)"], ["min_msgs_per_sec", "Min chat speed (msgs/s) to count"],
   ["cooldown_seconds", "Cooldown between clips (s)"], ["warmup_seconds", "Warm-up (s)"], ["buffer_seconds", "Video buffer (s)"],
-  ["quality", "Recording quality"], ["layout", "Layout (facecam needs a webcam box per streamer)", ["facecam", "blur", "crop"]], ["video_zoom", "Video zoom in blur layout (1.0-1.4)"],
+  ["quality", "Recording quality (auto = 1080p up to 4 streamers, else 720p)", ["auto", "1080p60,1080p,720p60,best", "720p60,720p,720p30,best", "480p,best"]], ["layout", "Layout (facecam needs a webcam box per streamer)", ["facecam", "blur", "crop"]], ["video_zoom", "Video zoom in blur layout (1.0-1.4)"],
   ["zoom_punch", "Zoom punch on key moments", ["true", "false"]],
   ["min_clip_score", "Min AI clip score to keep (0-10, 0 = keep all)"], ["best_moments_only", "Best moments only", ["true", "false"]],
   ["min_hype_score", "Min hype score"], ["min_unique_chatters", "Min different chatters at the peak"],
   ["smart_trim", "AI picks the best cut", ["true", "false"]],
+  ["low_memory", "Low memory mode (stops WinError 8)", ["true", "false"]], ["min_free_ram_mb", "Wait until this much RAM is free (MB)"],
+  ["max_queue", "Max clips waiting"],
   ["min_clip_seconds", "Shortest clip (s)"], ["max_clip_seconds", "Longest clip (s)"], ["word_captions", "Word captions", ["true", "false"]], ["burn_hook", "Top story captions", ["true", "false"]],
   ["sfx_enabled", "Sound effects", ["true", "false"]], ["max_sfx", "Max sound effects per clip"], ["sfx_volume", "Sound effect volume (0.1-1.5)"],
   ["sfx_intro_whoosh", "Whoosh at clip start", ["true", "false"]],
@@ -303,11 +306,13 @@ $("#settingsForm").onsubmit = async e => {
   await loadSettings(); toast("Settings saved");
 };
 
-const UI_VERSION = "0.8.0";
+const UI_VERSION = "0.9.0";
 async function loadHealth() {
   const h = await api("/api/health");
   $("#restart").style.display = h.version === UI_VERSION ? "none" : "block";
   $("#health").innerHTML = [
+    h.ram_free_mb != null ? `<span class="badge ${h.ram_free_mb < 3000 ? "bad" : "ok"}" title="Free memory. Below 3 GB, clips wait instead of crashing. Close Chrome tabs or watch fewer streamers.">RAM free: ${(h.ram_free_mb / 1024).toFixed(1)} / ${(h.ram_total_mb / 1024).toFixed(0)} GB</span>` : "",
+    h.streamers ? `<span class="badge" title="Estimated download speed needed for all recordings">${h.streamers} streamers ≈ ${h.bandwidth_mbps} Mbps</span>` : "",
     h.ffmpeg ? `<span class="badge ok">ffmpeg ✓</span>` : `<span class="badge bad">ffmpeg missing</span>`,
     h.encoder ? `<span class="badge ${h.encoder.includes("nvenc") ? "ok" : ""}">encoder: ${esc(h.encoder)}</span>` : "",
     `<span class="badge" title="${esc(Object.entries(h.sfx || {}).map(([k, v]) => `${k}: ${v}`).join(", "))}">sounds: ${Object.keys(h.sfx || {}).length} kinds</span>`,
@@ -393,7 +398,7 @@ $("#camClear").onclick = async () => { await api(`/api/streamers/${camKey}/facec
 
 loadSettings(); loadHealth(); refresh(); loadClips(); loadSounds();
 setInterval(refresh, 1500);
-setInterval(loadHealth, 30000);
+setInterval(loadHealth, 10000);
 </script>
 </body>
 </html>

@@ -106,8 +106,9 @@ def generate(settings, prompt, images=None, fmt=None, timeout=150, temperature=0
     info = resolve(settings)
     if not info["model"]:
         raise RuntimeError(info["error"] or "no Ollama model")
-    body = {"model": info["model"], "prompt": prompt, "stream": False, "keep_alive": "15m",
-            "options": {"temperature": temperature, "num_ctx": 12288, "num_predict": num_predict}}
+    low = settings["low_memory"]
+    body = {"model": info["model"], "prompt": prompt, "stream": False, "keep_alive": "2m" if low else "15m",
+            "options": {"temperature": temperature, "num_ctx": 8192 if low else 12288, "num_predict": num_predict}}
     if fmt:
         body["format"] = fmt
     if images and info["vision"]:
@@ -127,6 +128,17 @@ def generate(settings, prompt, images=None, fmt=None, timeout=150, temperature=0
     if not text.strip() and data.get("thinking"):
         text = data["thinking"]  # some thinking models put everything in the thinking field
     return text
+
+
+def unload(settings):
+    """Tells Ollama to free the model's memory now (GPU + RAM)."""
+    model = (_cache.get("info") or {}).get("model")
+    if not model:
+        return
+    try:
+        httpx.post(_base(settings) + "/api/generate", json={"model": model, "keep_alive": 0}, timeout=15)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _extract_json(text):

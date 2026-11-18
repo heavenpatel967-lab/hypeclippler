@@ -30,7 +30,10 @@ DEFAULTS = {
     "min_clip_seconds": 30,      # shortest clip the cut may produce
     "max_clip_seconds": 58,      # longest (Shorts limit is 60 s)
     # recording
-    "quality": "1080p60,1080p,720p60,best",  # 1080p looks much sharper in 9:16 (≈6-8 Mbps per streamer)
+    "quality": "auto",           # auto = 1080p60 for up to 4 streamers, 720p60 above that
+    "low_memory": True,          # free Whisper/AI memory between steps, smaller AI context (stops WinError 8)
+    "min_free_ram_mb": 3000,     # clip work waits until this much memory is free
+    "max_queue": 6,              # clips waiting at once; weaker new ones are skipped when full
     # output
     "layout": "facecam",         # facecam = webcam on top + gameplay below (when a webcam box is set),
                                  # blur = 16:9 video on blurred background, crop = fill screen

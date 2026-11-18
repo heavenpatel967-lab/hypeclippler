@@ -45,6 +45,7 @@ class Recorder:
         self.procs = []
         self.live = False
         self.thread = threading.Thread(target=self._loop, name=f"rec-{key}", daemon=True)
+        self.count_streamers = lambda: 1  # set by the manager
 
     def start(self):
         self.thread.start()
@@ -60,6 +61,22 @@ class Recorder:
             except OSError:
                 pass
         self.procs = []
+
+    def quality(self):
+        """'auto': 1080p for up to 4 streamers, 720p for more (bandwidth, disk and RAM)."""
+        q = self.settings["quality"]
+        if q != "auto":
+            return q
+        return "1080p60,1080p,720p60,best" if self.count_streamers() <= 4 else "720p60,720p,720p30,best"
+
+    def gaps(self, window=120):
+        """Seconds of video missing in the last `window` seconds (internet or PC too slow)."""
+        segs = [t for t, _ in self.segments() if t > time.time() - window]
+        missing = 0.0
+        for a, b in zip(segs, segs[1:]):
+            if b - a > SEG_SECONDS * 2:
+                missing += b - a - SEG_SECONDS
+        return round(missing, 1)
 
     def _source(self, attempt: int) -> str:
         url = stream_url(self.platform, self.channel)
@@ -80,7 +97,7 @@ class Recorder:
             self.live = False
             src = self._source(attempt)
             sl = tools.streamlink() + ["--stdout", "--loglevel", "error", "--hls-live-edge", "3",
-                                       "--stream-segment-threads", "2", src, self.settings["quality"]]
+                                       "--stream-segment-threads", "1", src, self.quality()]
             ff = [tools.ffmpeg(), "-hide_banner", "-loglevel", "error", "-i", "pipe:0",
                   "-map", "0:v:0?", "-map", "0:a:0?", "-c", "copy", "-f", "segment",
                   # timestamps keep running across chunks, so joined chunks play as one stream
