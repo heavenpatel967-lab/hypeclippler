@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import VERSION, clipper, llm, sfx, tools
+from . import VERSION, clipper, llm, render, sfx, tools
 from .config import CLIPS, STATIC, Settings
 from .manager import Manager
 
@@ -56,6 +56,10 @@ class UpdateStreamer(BaseModel):
     topic: str | None = None
     auto_clip: bool | None = None
     show_chat: bool | None = None
+
+
+class Facecam(BaseModel):
+    box: list[float] | None = None  # [x, y, w, h] as fractions of the frame, None = remove
 
 
 @app.get("/")
@@ -194,3 +198,36 @@ def delete_sound(kind: str, name: str):
     if not ok:
         raise HTTPException(404, "not found (built-in sounds can't be deleted)")
     return {"ok": True}
+
+
+@app.get("/api/streamers/{key}/snapshot")
+def streamer_snapshot(key: str):
+    """Latest frame of the stream, for drawing the webcam box."""
+    w = manager.workers.get(key)
+    if not w:
+        raise HTTPException(404, "not found")
+    segs = w.recorder.segments()
+    if len(segs) < 2:
+        raise HTTPException(400, "no video yet (stream offline or still connecting)")
+    out = w.recorder.dir / "snapshot.jpg"
+    try:
+        render.snapshot(segs[-2][1], out)
+    except RuntimeError as e:
+        raise HTTPException(500, str(e)[:200])
+    return FileResponse(out, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/streamers/{key}/facecam")
+def set_facecam(key: str, body: Facecam):
+    if key not in manager.workers:
+        raise HTTPException(404, "not found")
+    box = None
+    if body.box:
+        if len(body.box) != 4:
+            raise HTTPException(400, "box needs x, y, w, h")
+        x, y, bw, bh = (min(1.0, max(0.0, float(v))) for v in body.box)
+        if bw < 0.05 or bh < 0.05:
+            raise HTTPException(400, "box too small")
+        box = [round(x, 4), round(y, 4), round(min(bw, 1 - x), 4), round(min(bh, 1 - y), 4)]
+    manager.update(key, facecam=box)
+    return manager.workers[key].info()

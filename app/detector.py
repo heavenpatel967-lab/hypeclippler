@@ -56,6 +56,7 @@ class HypeDetector:
         self.peak_ts = 0.0
         self.peak_rate = 0.0
         self.last_clip = 0.0
+        self.peak_unique, self.peak_unique_ratio = 0, 0.0
         self.total_messages = 0
 
     def add(self, user: str, text: str, kind: str = "chat", ts: float | None = None, color: str | None = None):
@@ -101,19 +102,29 @@ class HypeDetector:
                 self.in_hype = True
                 self.hype_start = now
                 self.peak_ts, self.peak_rate = now, rate
+                self.peak_unique, self.peak_unique_ratio = 0, 0.0
             return None
 
+        users = {e[2] for e in self.events}
+        self.peak_unique = max(self.peak_unique, len(users))
         if rate > self.peak_rate:
             self.peak_ts, self.peak_rate = now, rate
+            # share of different people at the loudest second (1.0 = everyone wrote once)
+            self.peak_unique_ratio = len(users) / max(1, len(self.events))
         calm = rate < max(floor * 1.4, threshold * 0.55)
         too_long = now - self.hype_start > 45
         if calm or too_long:
             self.in_hype = False
+            if self.peak_unique < s["min_unique_chatters"]:
+                return None  # a few people spamming isn't a hype moment (no cooldown either)
             self.last_clip = now
+            # many different people reacting counts more than the same people spamming
+            crowd = 0.6 + 0.4 * min(1.0, self.peak_unique_ratio / 0.6)
             return {
                 "peak_ts": self.peak_ts,
                 "hype_start": self.hype_start,
-                "score": round(self.peak_rate / floor, 1),
+                "score": round(self.peak_rate / floor * crowd, 1),
+                "unique_chatters": self.peak_unique,
                 "peak_rate": round(self.peak_rate, 1),
                 "baseline": round(self.baseline, 2),
             }

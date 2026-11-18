@@ -101,19 +101,48 @@ damage or rizz can't be generated, so those folders stay empty until you add a f
 on sites like myinstants are uploaded by users and may be copyrighted; free licensed sounds are
 on https://pixabay.com/sound-effects/.
 
+### Only the best moments
+
+A chat spike alone isn't enough anymore. A moment has to pass four checks:
+1. **Different people react**: at least 6 different chatters at the peak (a few people
+   spamming doesn't count), and moments where many different people react score higher.
+2. **Strong enough**: hype score at least 3x, and with **Best moments only** it must beat 60% of
+   this stream's recent hype moments, so a busy stream doesn't clip every little spike.
+3. **The AI judges it**: after reading the chat, the speech and what's on screen, the AI explains
+   what happens, gives the clip a 1-10 virality score with a reason, and clips under **Min AI clip
+   score** (5) are thrown away. They show as "skipped" with the reason in Processing.
+   Without AI, the app's own score (hype, number of chatters, speech, loud moments) is used.
+4. **Best cut**: the app records 10 s more before and 6 s more after, and the AI picks the part
+   worth posting (15-50 s): starting just before the action, ending right after the reaction.
+   **✂ Clip now** clips are never skipped or trimmed.
+
+### Layouts and video quality
+
+- **facecam** (default): click **🎥 webcam** on a streamer's card, drag a box around the webcam
+  on the snapshot and save. Clips then show the webcam on top and gameplay below, split by a
+  thin yellow line. Streamers without a webcam box use **blur**.
+- **blur**: the 16:9 video zoomed 1.2x (setting) on a blurred background.
+- **Zoom punch**: a quick zoom-in on the strongest moments.
+- Sharper output: lanczos scaling, light sharpening, higher NVENC quality. Record at
+  **1080p60** (Settings > Recording quality: `1080p60,1080p,720p60,best`) for the best result;
+  it needs about 6-8 Mbps per streamer.
+
 ### How the AI writes each clip
 
 1. Frames are taken at the start, at each key moment and near the end.
 2. The vision model describes each frame ("police cars surround the bank, red BUSTED text").
-3. The text model gets the whole timeline (what's on screen, what the streamer says, how chat
-   reacts, loud moments) and writes the title, 4–7 timed captions, the description, hashtags
+3. The chat is analyzed: speed over time, how many different people reacted, the most repeated
+   messages, and what chatters actually wrote right after each moment.
+4. The text model gets all of it, first explains what happens and why chat reacted, scores it,
+   picks the best cut, and writes the title, 4–7 timed captions, the description, hashtags
    and which sound effects go where (and why).
-4. Generic lines ("what just happened", "chat went crazy"...) and captions/titles used in the
+5. Generic lines ("what just happened", "chat went crazy"...) and captions/titles used in the
    last 12 clips are banned, so clips don't repeat each other.
 
 Without Ollama, template captions are used. They quote the streamer's own words at the key
 moments, use a larger set of lines, and also avoid the last clips' lines and sounds.
-Each clip's details show what the AI saw, the captions and why each sound was picked.
+Each clip's details show what the AI saw, the captions and why each sound was picked. Every
+clip folder also has `ai_debug.txt` with the AI's raw answers, for troubleshooting.
 
 ### Caption looks
 

@@ -59,6 +59,10 @@ def _fallback(ctx):
         "hashtags": _tags(s, ctx["platform"], topic),
         "captions": caps,
         "sounds": None,
+        "story": "",
+        "ai_score": None,
+        "score_reason": "",
+        "window": None,
         "source": "template",
     }
 
@@ -78,61 +82,88 @@ def _clean_sounds(raw, ctx):
     return out[:ctx["max_sfx"]] or None
 
 
+SCHEMA = {
+    "type": "object",
+    "properties": {
+        "story": {"type": "string"},
+        "score": {"type": "integer"},
+        "reason": {"type": "string"},
+        "start": {"type": "number"},
+        "end": {"type": "number"},
+        "title": {"type": "string"},
+        "captions": {"type": "array", "items": {"type": "object", "properties": {
+            "time": {"type": "number"}, "text": {"type": "string"}}, "required": ["time", "text"]}},
+        "sounds": {"type": "array", "items": {"type": "object", "properties": {
+            "time": {"type": "number"}, "sound": {"type": "string"}, "why": {"type": "string"}},
+            "required": ["time", "sound"]}},
+        "description": {"type": "string"},
+        "hashtags": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["story", "score", "start", "end", "title", "captions", "sounds", "description", "hashtags"],
+}
+
+
 def generate(settings, ctx):
-    """ctx: streamer, platform, topic, chat, timeline, duration, fallback_captions, main_cat,
-    quote, recent_captions, recent_titles, sound_kinds {kind: label}, max_sfx, seed."""
+    """ctx: streamer, platform, topic, chat, chat_digest, timeline, duration, fallback_captions,
+    main_cat, quote, recent_captions, recent_titles, sound_kinds {kind: label}, max_sfx, seed,
+    hype_score, saw_video, trim (bool)."""
     from .story import clean_captions
     fb = _fallback(ctx)
-    sounds_list = "\n".join(f"- {k}: {v}" for k, v in ctx["sound_kinds"].items() if k != "whoosh")
+    sounds_list = "\n".join(f"- {k}: {v}" for k, v in ctx["sound_kinds"].items() if k != "whoosh") or "(none)"
     avoid = sorted(set(GENERIC + [c.lower() for c in ctx.get("recent_captions", [])]))[:40]
-    prompt = f"""You are a top YouTube Shorts editor. You turn live stream moments into viral clips.
+    d = ctx["duration"]
+    trim = (f'"start"/"end": the best part to post, in seconds of this recording (0-{d:.0f}). 15-50 s long. '
+            "Start a few seconds before the action so viewers understand it, end right after the "
+            "reaction. Cut boring parts." if ctx.get("trim") else f'"start": 0, "end": {d:.0f}.')
+    prompt = f"""You are the best YouTube Shorts / TikTok clipper in the world. You decide if a live stream
+moment is worth posting and you edit it so people watch till the end.
 
-Streamer: {ctx['streamer']} ({ctx['platform']})
-Game/topic: {ctx['topic'] or "unknown"}
-Clip length: {ctx['duration']:.0f} seconds.
+Streamer: {ctx['streamer']} ({ctx['platform']}), game/topic: {ctx['topic'] or "unknown"}
+Recording length: {d:.0f} s. Chat hype score: {ctx.get('hype_score')}x faster than normal.
 
-TIMELINE (seconds from clip start). "on screen" = what a vision model saw in the video,
-"streamer says" = speech, "chat reacts" = live chat reaction, "loud" = loud audio:
+TIMELINE (seconds). "on screen" = what a vision model saw, "streamer says" = his speech,
+"chat reacts" = reaction bursts, "very loud moment" = screams/crashes:
 {ctx['timeline'][:3500]}
 
-Chat messages at the peak: {"; ".join(ctx['chat'][-25:])[:900]}
+LIVE CHAT ANALYSIS (chat is ~3-5 s behind the action; read WHY chat reacts):
+{ctx.get('chat_digest', '')[:3500]}
 
-Write captions that tell THE STORY OF THIS CLIP using the specific things in the timeline:
-what he does, what happens to him, what he says, how chat reacts. Name concrete things
-(the cops, the car, the jump, his exact words). Use his funniest/most dramatic words as a
-quote caption when he says something good. Captions are uppercase-friendly, 2 to 6 words,
-punchy, no emojis, no hashtags.
-
-Good examples (for other clips): "HE THOUGHT HE WAS SAFE", "COPS PULLED UP INSTANTLY",
-"\\"BRO I'M DONE\\"", "THE CAR JUST FLIPPED", "CHAT SAW IT COMING", "HE PANICKED".
-NEVER use these generic lines: {", ".join(avoid)}.
-
-Sound effects available (pick only from this list, use the name before the colon):
+Answer in JSON:
+"story": 2-3 sentences: what exactly happens, in order, and why chat reacted the way it did.
+"score": 1-10, how viral this clip would be for people who don't know the streamer
+  (1-3 nothing happens / only chat spam, 4-5 mildly interesting, 6-7 good, 8-10 must post).
+"reason": one short sentence for the score.
+{trim}
+"title": under 70 characters, specific to what happens, includes {ctx['streamer']}, makes people click.
+"captions": 4-7 items {{"time": seconds, "text": "2-6 words"}} telling the story as it happens:
+  first one at "start" sets it up so people keep watching, the others land exactly on the
+  action/reaction. Name concrete things (the cops, the car, the boss, his exact words). Quote
+  his best line in quotes when he says something good. 3+ seconds apart. No emojis.
+  Good examples (other clips): "HE THOUGHT HE WAS SAFE", "COPS PULLED UP INSTANTLY",
+  "\\"BRO I'M DONE\\"", "THE BOSS ONE-SHOT HIM", "CHAT SAW IT COMING".
+  Never use: {", ".join(avoid)}.
+"sounds": up to {ctx['max_sfx']} {{"time", "sound", "why"}} exactly on actions that fit, names only from:
 {sounds_list}
-
-Return JSON with keys:
-"title": Shorts title under 70 characters, specific to this clip, includes {ctx['streamer']},
-"captions": 4 to 7 items {{"time": seconds, "text": "..."}}. First at 0 sets up the story and makes
-  people keep watching. Others land exactly when things happen in the timeline. 3+ seconds apart,
-"sounds": up to {ctx['max_sfx']} items {{"time": seconds, "sound": "name", "why": "short reason"}} placed
-  exactly on the action that fits (a fail, a crash, a shock, a funny line), each sound name used once,
-"description": 1-2 sentences about what happens,
-"hashtags": 5-8 hashtags with # (include #shorts, the streamer and the game).
-Only JSON."""
+"description": 1-2 sentences. "hashtags": 5-8 with # (#shorts, the streamer, the game).
+Times are seconds of the recording (0-{d:.0f})."""
     try:
-        data = llm.generate_json(settings, prompt, timeout=180)
+        data = llm.generate_json(settings, prompt, schema=SCHEMA, label="clip editor", timeout=240,
+                                 temperature=0.7, num_predict=2000)
         tags = data.get("hashtags") or []
         if isinstance(tags, str):
             tags = tags.split()
         tags = [t if t.startswith("#") else "#" + t for t in map(str, tags) if t.strip("#")][:10]
-        caps = clean_captions(data.get("captions"), ctx["duration"], fb["captions"])
-        # drop generic lines the model used anyway; fall back if too few remain
+        caps = clean_captions(data.get("captions"), d, fb["captions"])
         if caps is not fb["captions"]:
             kept = [c for c in caps if c["text"].lower().strip(" .!?") not in GENERIC]
             caps = kept if len(kept) >= 3 else fb["captions"]
         title = str(data.get("title", "")).strip().strip('"')[:100]
         if title:
             info = llm.resolve(settings)
+            try:
+                score = max(1, min(10, int(round(float(data.get("score"))))))
+            except (TypeError, ValueError):
+                score = None
             return {
                 "title": title,
                 "hook": caps[0]["text"] if caps else fb["hook"],
@@ -140,6 +171,10 @@ Only JSON."""
                 "hashtags": tags or fb["hashtags"],
                 "captions": caps,
                 "sounds": _clean_sounds(data.get("sounds"), ctx),
+                "story": str(data.get("story", "")).strip()[:600],
+                "ai_score": score,
+                "score_reason": str(data.get("reason", "")).strip()[:200],
+                "window": (data.get("start"), data.get("end")),
                 "source": f"AI ({info['model']}{', saw the video' if ctx.get('saw_video') else ''})"
                           + ("" if caps is not fb["captions"] else ", template captions"),
             }

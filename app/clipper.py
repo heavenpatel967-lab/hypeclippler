@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from . import captions, scenes, sfx, story, titles, tools
+from . import captions, llm, render, scenes, sfx, story, titles, tools
 from .config import CLIPS
 from .recorder import SEG_SECONDS
 
@@ -31,7 +31,8 @@ def list_jobs():
     now = time.time()
     with _jobs_lock:
         for jid in [k for k, j in jobs.items()
-                    if j["state"] == "done" or (j["state"] == "failed" and now - j.get("ended", now) > 600)]:
+                    if j["state"] == "done" or (j["state"] in ("failed", "skipped")
+                                                and now - j.get("ended", now) > 600)]:
             del jobs[jid]
         return [dict(j) for j in jobs.values()]
 
@@ -84,14 +85,31 @@ def _tag_moods(caps, moments, main_cat):
         c["cat"] = near[0]["cat"] if near else ("setup" if i == 0 else main_cat)
 
 
-def _render_filter(layout, video_y):
-    if layout == "crop":
-        return "[0:v]scale=-2:1920,crop=1080:1920,ass=captions.ass,format=yuv420p[v]"
-    y = "(H-h)/2" if video_y is None else str(video_y)
-    # background: blurred at low resolution (fast), then scaled up
-    return ("[0:v]split=2[a][b];[a]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,"
-            "boxblur=10:2,scale=1080:1920,eq=brightness=-0.12[bg];[b]scale=1080:-2[fg];"
-            f"[bg][fg]overlay=(W-w)/2:{y},ass=captions.ass,format=yuv420p[v]")
+def _shift_words(words, offset, end):
+    return [{**w, "start": round(w["start"] - offset, 3), "end": round(w["end"] - offset, 3)}
+            for w in words if 0 <= w["start"] - offset <= end]
+
+
+def _shift_captions(caps, offset, end):
+    """Captions after trimming. The last caption before the cut becomes the opening one."""
+    before = [c for c in caps if c["time"] - offset < 0.5]
+    inside = [{**c, "time": round(c["time"] - offset, 2)} for c in caps if 0.5 <= c["time"] - offset < end - 1]
+    if before:
+        inside.insert(0, {**before[-1], "time": 0.0})
+    elif inside:
+        inside[0]["time"] = 0.0
+    return inside
+
+
+def _skip(job_id, out_dir, reason):
+    log.info("clip %s skipped: %s", job_id, reason)
+    _set(job_id, state="skipped", error=reason, ended=time.time())
+    for f in out_dir.glob("*"):
+        f.unlink(missing_ok=True)
+    try:
+        out_dir.rmdir()
+    except OSError:
+        pass
 
 
 def _process(job_id, streamer, moment, settings, manual):
@@ -99,11 +117,14 @@ def _process(job_id, streamer, moment, settings, manual):
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
         pre, post = settings["pre_seconds"], settings["post_seconds"]
-        t0, t1 = moment["peak_ts"] - pre, moment["peak_ts"] + post
+        trim = settings["smart_trim"] and not manual
+        extra_pre, extra_post = (10, 6) if trim else (0, 0)  # wider recording, AI cuts the best part
+        t0 = moment["peak_ts"] - pre - extra_pre
+        t1 = moment["peak_ts"] + post + extra_post
         ready_at = t1 + SEG_SECONDS + 2
         while time.time() < ready_at:
             time.sleep(0.5)
-        # chat is collected after the clip window ended, so it covers all of it
+        # chat is collected after the window ended, so it covers all of it
         # (plus 15 s before, used to pre-fill the chat box)
         chat_log = streamer.detector.chat_log(t0 - 15, t1)
         chat_log = [{**m, "t": round(m["t"] - 15, 2)} for m in chat_log]
@@ -118,34 +139,34 @@ def _process(job_id, streamer, moment, settings, manual):
         enc = tools.video_encoder()
 
         with _heavy:
-            wide = out_dir / "clip_16x9.mp4"
+            full = out_dir / "full.mp4"
             tools.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{offset:.2f}", "-i", str(src),
                        "-t", f"{duration:.2f}", "-map", "0:v:0", "-map", "0:a:0?", *enc,
-                       "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(wide)])
+                       "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(full)])
             src.unlink(missing_ok=True)
 
             _set(job_id, state="captioning")
             try:
-                words, lang = captions.transcribe(wide, settings)
+                words, lang = captions.transcribe(full, settings)
             except Exception as e:  # noqa: BLE001 - a clip without captions is better than none
                 log.warning("captions failed: %s", e)
                 words, lang = [], "?"
-            transcript = " ".join(w["word"] for w in words)
             if not words:
                 log.info("%s: no speech found in clip, no word captions", streamer.channel_name)
 
-            _set(job_id, state="finding key moments")
-            peaks = story.audio_peaks(wide, duration)
+            _set(job_id, state="analyzing chat + audio")
+            peaks = story.audio_peaks(full, duration)
             in_clip_chat = [m for m in chat_log if m["t"] >= 0]
             moments = story.build_moments(in_clip_chat, words, peaks, duration)
             main_cat = story.main_category(moments)
+            digest, chat_metrics = story.chat_digest(in_clip_chat, moments, duration)
             topic = streamer.topic or settings["default_topic"]
             recent = _recent_history()
 
             scenes_found = []
             if settings["vision"]:
                 _set(job_id, state="watching the clip (AI vision)")
-                frames = scenes.extract_frames(wide, scenes.key_times(moments, duration), out_dir)
+                frames = scenes.extract_frames(full, scenes.key_times(moments, duration), out_dir)
                 scenes_found = scenes.describe(settings, frames, topic, streamer.channel_name)
                 for _, f in frames:
                     f.unlink(missing_ok=True)
@@ -153,56 +174,101 @@ def _process(job_id, streamer, moment, settings, manual):
             fallback_caps = story.fallback_captions(moments, duration, main_cat, seed=job_id, words=words,
                                                     avoid=recent["captions"], topic=topic)
             available_sounds = sfx.available() if settings["sfx_enabled"] else {}
-            _set(job_id, state="writing title + captions")
+            _set(job_id, state="AI judging + writing captions")
             meta_text = titles.generate(settings, {
                 "streamer": streamer.channel_name, "platform": streamer.platform, "topic": topic,
-                "chat": chat, "duration": duration, "main_cat": main_cat, "seed": job_id,
+                "chat": chat, "chat_digest": digest, "duration": duration, "main_cat": main_cat,
+                "seed": job_id, "hype_score": moment.get("score"), "trim": trim,
                 "timeline": story.timeline_text(moments, words, duration, scenes_found),
                 "fallback_captions": fallback_caps, "quote": story.best_quote(words, moments),
                 "recent_captions": recent["captions"], "recent_titles": recent["titles"],
                 "sound_kinds": {k: sfx.KINDS[k] for k in available_sounds},
                 "max_sfx": settings["max_sfx"], "saw_video": bool(scenes_found),
             })
+            (out_dir / "ai_debug.txt").write_text(llm.take_debug() or "(AI not used)", encoding="utf-8")
             ai_sounds = meta_text.pop("sounds", None)
+            ai_window = meta_text.pop("window", None)
+
+            # ---- is it worth posting?
+            score = meta_text.get("ai_score") or story.heuristic_score(moment.get("score"), chat_metrics,
+                                                                       moments, words)
+            if not manual and settings["min_clip_score"] and score < settings["min_clip_score"]:
+                why = meta_text.get("score_reason") or "not enough happening"
+                _skip(job_id, out_dir, f"score {score}/10 < {settings['min_clip_score']}: {why}")
+                return
+
+            # ---- cut the best part
+            start, end = story.smart_window(moments, words, duration, ai_window) if trim else (0.0, duration)
+            clip_len = end - start
+            wide = out_dir / "clip_16x9.mp4"
+            tools.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{start:.2f}", "-i", str(full),
+                       "-t", f"{clip_len:.2f}", "-map", "0:v:0", "-map", "0:a:0?", *enc,
+                       "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(wide)])
+            full.unlink(missing_ok=True)
+            words = _shift_words(words, start, clip_len)
+            moments = story.shift(moments, start, clip_len)
+            scenes_found = story.shift(scenes_found, start, clip_len, key="time")
+            chat_log = [{**m, "t": round(m["t"] - start, 2)} for m in chat_log
+                        if -15 <= m["t"] - start <= clip_len]
+            meta_text["captions"] = _shift_captions(meta_text["captions"], start, clip_len) or \
+                story.fallback_captions(moments, clip_len, main_cat, seed=job_id, words=words, topic=topic)
+            ai_sounds = story.shift(ai_sounds or [], start, clip_len - 0.5, key="time") or None
+            transcript = " ".join(w["word"] for w in words)
 
             _tag_moods(meta_text["captions"], moments, main_cat)
             sounds = []
             if settings["sfx_enabled"]:
-                sounds = story.pick_sfx(moments, duration, available_sounds, settings["max_sfx"],
+                sounds = story.pick_sfx(moments, clip_len, available_sounds, settings["max_sfx"],
                                         settings["sfx_intro_whoosh"], seed=job_id,
                                         recent_kinds=recent["sound_kinds"], recent_files=recent["sound_files"],
                                         ai_picks=ai_sounds)
 
+            # ---- render 9:16
             _set(job_id, state="rendering 9:16")
+            src_w, src_h, fps = render.probe(wide)
+            cam_box = getattr(streamer, "facecam", None)
             layout = settings["layout"]
-            geo = captions.geometry(layout, show_chat, settings["caption_position"])
+            geo = render.geometry(layout, show_chat, settings["caption_position"], settings["video_zoom"],
+                                  cam_box, (src_w, src_h))
             (out_dir / "captions.ass").write_text(
-                captions.build_ass(words, duration, meta_text["captions"], layout, settings["caption_font"],
+                captions.build_ass(words, clip_len, meta_text["captions"], layout, settings["caption_font"],
                                    settings["burn_hook"], chat_log, show_chat, settings["caption_position"],
-                                   settings["top_caption_style"], settings["word_color"]),
+                                   settings["top_caption_style"], settings["word_color"], geo=geo),
                 encoding="utf-8")
-            vf = _render_filter(layout, geo["video_y"])
+            strongest = sorted(moments, key=lambda m: -m["strength"])[:3]
+            punch = sorted(m["t"] for m in strongest if m["t"] > 0.8) if settings["zoom_punch"] else []
             has_audio = bool(peaks) or _has_audio(wide)
-            plain = ["-filter_complex", vf, "-map", "[v]", "-map", "0:a?", "-c:a", "copy"]
 
-            def render(audio_args):
+            def render_with(punch_times, with_sfx):
+                vf = render.video_filter(geo, (src_w, src_h), cam_box, punch_times, fps)
+                if with_sfx:
+                    extra_in, af, alabel = sfx.mix_args(sounds, settings["sfx_volume"])
+                    audio = [*extra_in, "-filter_complex", vf + ";" + af, "-map", "[v]", "-map", alabel,
+                             "-c:a", "aac", "-b:a", "192k"]
+                else:
+                    audio = ["-filter_complex", vf, "-map", "[v]", "-map", "0:a?", "-c:a", "copy"]
                 # cwd=out_dir so the subtitle path has no "C:\" (ffmpeg filter escaping on Windows)
-                tools.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", wide.name, *audio_args, *enc,
-                           "-movflags", "+faststart", "clip_9x16.mp4"], cwd=out_dir)
+                tools.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", wide.name, *audio, *enc,
+                           "-r", f"{fps:g}", "-movflags", "+faststart", "clip_9x16.mp4"], cwd=out_dir, timeout=900)
 
-            if sounds and has_audio:
-                extra_in, af, alabel = sfx.mix_args(sounds, settings["sfx_volume"])
+            use_sfx = bool(sounds) and has_audio
+            attempts = []
+            for a in ((tuple(punch), use_sfx), ((), use_sfx), ((), False)):
+                if a not in attempts:
+                    attempts.append(a)
+            for n, (pt, ws) in enumerate(attempts):
                 try:
-                    render([*extra_in, "-filter_complex", vf + ";" + af, "-map", "[v]", "-map", alabel,
-                            "-c:a", "aac", "-b:a", "192k"])
-                except RuntimeError as e:  # a broken sound file shouldn't cost the whole clip
-                    log.warning("sound effects failed (%s), rendering without them", e)
-                    sounds = []
-                    render(plain)
-            else:
+                    render_with(list(pt), ws)
+                    break
+                except RuntimeError as e:  # zoom or a sound file broke: retry simpler
+                    if n == len(attempts) - 1:
+                        raise
+                    log.warning("render attempt %d failed (%s), retrying simpler", n + 1, str(e)[:200])
+            punch = list(pt)
+            if not ws:
                 sounds = []
-                render(plain)
-            tools.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{min(pre, duration / 2):.2f}",
+            thumb_t = strongest[0]["t"] if strongest else clip_len / 2
+            tools.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{min(thumb_t, clip_len - 0.5):.2f}",
                        "-i", "clip_9x16.mp4", "-frames:v", "1", "-vf", "scale=360:-2", "thumb.jpg"], cwd=out_dir)
 
         meta = {
@@ -212,12 +278,17 @@ def _process(job_id, streamer, moment, settings, manual):
             "platform": streamer.platform,
             "peak_time": datetime.fromtimestamp(moment["peak_ts"]).strftime("%Y-%m-%d %H:%M:%S"),
             "score": moment.get("score"),
+            "clip_score": score,
             "manual": manual,
-            "duration": round(duration, 1),
+            "duration": round(clip_len, 1),
+            "trimmed": [start, end] if trim else None,
             "language": lang,
             "transcript": transcript,
             "chat": chat[-25:],
+            "chat_stats": chat_metrics,
             "show_chat": show_chat,
+            "layout": geo["kind"],
+            "zoom_punches": punch,
             "moments": [{k: m[k] for k in ("t", "cat", "src")} for m in moments],
             "sfx": [{"time": s["time"], "sound": s["sound"], "for": s.get("why") or s["cat"],
                      "file": Path(s["file"]).name} for s in sounds],
@@ -228,7 +299,7 @@ def _process(job_id, streamer, moment, settings, manual):
         }
         (out_dir / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
         _set(job_id, state="done")
-        log.info("Clip ready: %s - %s", streamer.channel_name, meta["title"])
+        log.info("Clip ready: %s - %s (score %s/10)", streamer.channel_name, meta["title"], score)
     except Exception as e:  # noqa: BLE001
         log.exception("clip %s failed", job_id)
         _set(job_id, state="failed", error=str(e)[:300], ended=time.time())

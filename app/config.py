@@ -22,10 +22,18 @@ DEFAULTS = {
     "min_msgs_per_sec": 1.0,     # ignore spikes in tiny chats below this speed
     "cooldown_seconds": 90,      # min gap between two auto clips of the same streamer
     "warmup_seconds": 60,        # learn the normal chat speed before clipping
+    "min_unique_chatters": 6,    # different people reacting at the peak (stops spam from triggering)
+    "min_hype_score": 3.0,       # final hype score needed for an auto clip
+    "best_moments_only": True,   # only clip moments stronger than most of this stream's recent hype
+    "min_clip_score": 5,         # 0-10 virality score from the AI (or the app) needed to keep a clip, 0 = keep all
+    "smart_trim": True,          # record a wider window and let the AI cut the best part
     # recording
-    "quality": "720p60,720p,720p30,best",
+    "quality": "1080p60,1080p,720p60,best",  # 1080p looks much sharper in 9:16 (≈6-8 Mbps per streamer)
     # output
-    "layout": "blur",            # blur = 16:9 video on blurred 9:16 background, crop = fill screen
+    "layout": "facecam",         # facecam = webcam on top + gameplay below (when a webcam box is set),
+                                 # blur = 16:9 video on blurred background, crop = fill screen
+    "video_zoom": 1.2,           # blur layout: crop the sides so the video is bigger (1.0-1.4)
+    "zoom_punch": True,          # quick zoom-in on the key moments
     "caption_position": "above",  # word captions: above | on_video | below the video
     "burn_hook": True,
     "top_caption_style": "pop",   # pop | box | classic

@@ -339,3 +339,118 @@ def pick_sfx(moments, duration, available: dict, max_sfx: int, intro_whoosh=True
                       "file": _choose_file(available[sound]["files"], recent_files, rnd)})
     picks.sort(key=lambda p: p["time"])
     return picks
+
+
+# ------------------------------------------------------------- chat analysis
+def _norm(text):
+    t = re.sub(r"\s+", " ", text.strip().lower())
+    t = re.sub(r"(.)\1{2,}", r"\1\1", t)          # "lmaooooo" -> "lmaoo"
+    words = t.split()
+    if len(words) > 1 and len(set(words)) == 1:    # "KEKW KEKW KEKW" -> "kekw"
+        t = words[0]
+    return t[:40]
+
+
+def chat_digest(chat, moments, duration):
+    """What chat did during the clip, as text for the AI plus numbers for scoring."""
+    if not chat:
+        return "(no chat messages)", {"messages": 0, "unique": 0, "peak_unique_5s": 0, "spread": 0.0}
+    users = {m["user"] for m in chat}
+    counts = Counter(_norm(m["text"]) for m in chat if m["text"].strip())
+    # chat speed per 2 seconds as a tiny graph the AI can read
+    buckets = [0] * (int(duration // 2) + 1)
+    for m in chat:
+        i = int(m["t"] // 2)
+        if 0 <= i < len(buckets):
+            buckets[i] += 1
+    top = max(buckets) or 1
+    bars = " ".join(f"{i * 2}s:{'#' * max(1, round(8 * b / top)) if b else '.'}" for i, b in enumerate(buckets))
+    peak_unique = 0
+    for s in range(0, int(duration)):
+        peak_unique = max(peak_unique, len({m["user"] for m in chat if s <= m["t"] < s + 5}))
+    # what different people wrote: one line per distinct idea, longest/most "telling" first
+    telling = []
+    for m in chat:
+        t = m["text"].strip()
+        if 12 <= len(t) <= 120 and not re.fullmatch(r"(\S+)( \1)*", t):
+            telling.append((m["t"], m["user"], t))
+    seen, notable = set(), []
+    for t, u, text in telling:
+        key = _norm(text)[:25]
+        if key not in seen:
+            seen.add(key)
+            notable.append(f"{t:5.1f}s {u}: {text}")
+    step = max(1, len(notable) // 30)
+    around = []
+    for m in sorted(moments, key=lambda m: -m["strength"])[:3]:
+        lines = [f"{c['t']:5.1f}s {c['user']}: {c['text'][:80]}" for c in chat if m["t"] <= c["t"] <= m["t"] + 7]
+        around.append(f"right after {m['t']:.1f}s: " + " | ".join(lines[:12]))
+    text = (f"{len(chat)} messages from {len(users)} different people; up to {peak_unique} people in 5 seconds.\n"
+            f"chat speed: {bars}\n"
+            f"most repeated: " + ", ".join(f'"{k}" x{v}' for k, v in counts.most_common(8)) + "\n"
+            "what chatters said (sample):\n  " + "\n  ".join(notable[::step][:30]) + "\n"
+            + "\n".join(around))
+    spread = len(users) / max(1, len(chat))
+    return text, {"messages": len(chat), "unique": len(users), "peak_unique_5s": peak_unique, "spread": spread}
+
+
+def heuristic_score(hype_score, metrics, moments, words):
+    """0-10 'is this worth posting' score when no AI is available."""
+    try:
+        hype = float(hype_score)
+    except (TypeError, ValueError):
+        hype = 4.0
+    score = min(4.5, hype * 0.8)
+    score += min(2.0, metrics.get("peak_unique_5s", 0) / 12)
+    cats = {m["cat"] for m in moments}
+    score += 1.0 if any(m["src"] == "speech" for m in moments) else 0
+    score += 1.0 if any(m["src"] == "audio" for m in moments) else 0
+    score += 0.5 if len(cats) >= 2 else 0
+    score += 0.5 if len(words) > 15 else 0
+    return round(max(1.0, min(10.0, score)), 1)
+
+
+def smart_window(moments, words, duration, ai=None, min_len=15.0, max_len=55.0):
+    """Best part of the recorded window: (start, end) in seconds.
+    Uses the AI's choice when it makes sense, otherwise starts ~10 s before the first strong
+    moment and ends ~7 s after the last one. Never cuts in the middle of a word."""
+    strong = [m for m in moments if m["strength"] >= 1.0] or moments
+    if ai:
+        try:
+            s, e = float(ai[0]), float(ai[1])
+            if 0 <= s < e <= duration + 1 and min_len <= e - s <= max_len + 5 and \
+                    any(s <= m["t"] <= e for m in strong or [{"t": (s + e) / 2}]):
+                start, end = s, min(e, duration)
+            else:
+                ai = None
+        except (TypeError, ValueError, IndexError):
+            ai = None
+    if not ai:
+        if not strong:
+            return 0.0, duration
+        start = max(0.0, strong[0]["t"] - 10.0)
+        end = min(duration, strong[-1]["t"] + 7.0)
+    if end - start < min_len:  # grow evenly
+        pad = (min_len - (end - start)) / 2
+        start, end = max(0.0, start - pad), min(duration, end + pad)
+        if end - start < min_len:
+            start, end = (0.0, min(duration, min_len)) if start == 0 else (max(0.0, duration - min_len), duration)
+    if end - start > max_len:
+        end = start + max_len
+    # don't start or end in the middle of a word
+    for w in words:
+        if w["start"] < start < w["end"]:
+            start = w["start"] - 0.1
+        if w["start"] < end < w["end"]:
+            end = w["end"] + 0.15
+    return round(max(0.0, start), 2), round(min(duration, end), 2)
+
+
+def shift(items, offset, end, key="t"):
+    """Moves timed items by -offset and drops the ones outside [0, end]."""
+    out = []
+    for it in items:
+        t = it[key] - offset
+        if 0 <= t <= end:
+            out.append({**it, key: round(t, 2)})
+    return out
