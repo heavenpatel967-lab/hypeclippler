@@ -112,6 +112,58 @@ military base"). No chat box, no word captions, no sound effects.
 - Caption style `tiktok` = white box with black text, `impact` = big white outlined text.
 - Clips are rendered at 30 fps by default (smoother on a busy PC, smaller files).
 
+### Auto download and auto delete
+
+Quick switches **⬇ Auto download** and **🗑 Delete after download**:
+- Auto download copies every finished clip to `Videos\HypeClipper` (change it in Settings >
+  Download folder): the 9:16 mp4 and a `.txt` with the title, caption, hashtags and upload links.
+- Delete after download then removes it from the dashboard (after any auto uploads finish).
+- **💾 Save** on a clip card saves one clip by hand.
+
+### Uploading to YouTube (one-time setup, ~10 minutes, free)
+
+1. Go to https://console.cloud.google.com, create a project (e.g. "HypeClipper").
+2. **APIs & Services > Library**: enable **YouTube Data API v3**.
+3. **APIs & Services > OAuth consent screen** (Google Auth Platform): type **External**, fill in
+   the app name and your email. Under **Audience** add your Google account as a test user,
+   then click **Publish app** ("In production"). Otherwise the login stops working every 7 days.
+   For your own use you don't need Google's verification; you'll just see an "unverified app"
+   warning when connecting (click Advanced > Go to HypeClipper).
+4. **Credentials > Create credentials > OAuth client ID > Desktop app**. Download the JSON.
+5. In the dashboard (Downloads & uploads > YouTube): **Upload client_secret.json**, then
+   **Connect YouTube** and sign in with the account that owns the channel.
+
+Uploads use the title + `#shorts`, the caption, hashtags, category Gaming, and the visibility
+from Settings (public / unlisted / private). Google's default quota allows 100 uploads a day.
+
+### Uploading to Instagram (one-time setup, ~15 minutes, free)
+
+1. Your Instagram account must be **Professional** (Creator or Business).
+2. Go to https://developers.facebook.com > **My Apps > Create app**, use case
+   **"Manage messaging & content on Instagram"**.
+3. In the app: **Instagram > API setup with Instagram login**. Under "Generate access tokens"
+   click **Add account** and log in with your Instagram account (add it as an Instagram tester
+   in **App roles** if asked, then accept the invite in Instagram: Settings > Website
+   permissions > Apps and websites > Tester invites).
+4. Click **Generate token**, copy it, and paste it in the dashboard (Downloads & uploads >
+   Instagram > Connect). The app refreshes the token automatically (it lasts 60 days and is
+   renewed weekly while the app runs).
+
+The app doesn't need Meta's app review for your own account. Instagram allows 50 API posts per
+24 hours. Uploads go directly from your PC (resumable upload); if Instagram rejects one, the
+error shows on the clip card and you can post it by hand from the download folder.
+
+### Automatic uploads
+
+**▶ Auto YouTube** / **📷 Auto Instagram** upload new clips automatically when:
+- the AI scored them at least **7/10** (Settings > Auto-upload only clips scored at least),
+- the platform is connected,
+- at least **20 minutes** passed since the last auto upload there (Settings), so the channel
+  doesn't look like spam. ✂ Clip now clips are never auto-uploaded; use the buttons on the card.
+
+Watch the first few uploads before leaving it alone. Uploading other streamers' content without
+permission can get copyright strikes; see the Copyright note.
+
 ### Starting, stopping, restarting
 
 - **Stop**: click **⏻ Stop app** in the dashboard header, or double-click `stop.bat` (also frees
