@@ -55,22 +55,21 @@ def _score(v):
         return 99.0  # manual clips
 
 
-def submit(streamer, moment: dict, settings, manual=False):
+def submit(streamer, moment: dict, settings, manual=False, force=False):
     job_id = datetime.now().strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4]
     with _jobs_lock:
         waiting = [j for j in jobs.values() if j["state"] not in ("done", "failed", "skipped")]
-        if not manual and len(waiting) >= settings["max_queue"]:
+        if not manual and not force and len(waiting) >= settings["max_queue"]:
             weakest = min((_score(j.get("score")) for j in waiting), default=0)
             if _score(moment.get("score")) <= weakest:
-                log.info("%s: queue full (%d clips waiting), weaker moment skipped",
-                         streamer.channel_name, len(waiting))
+                streamer.record_skip(moment, f"queue full ({len(waiting)} clips waiting)")
                 jobs[job_id] = {"id": job_id, "streamer": streamer.channel_name, "platform": streamer.platform,
                                 "state": "skipped", "score": moment.get("score"), "ended": time.time(),
                                 "error": f"queue full ({len(waiting)} clips waiting), stronger moments first"}
                 return job_id
         jobs[job_id] = {"id": job_id, "streamer": streamer.channel_name, "platform": streamer.platform,
                         "state": "waiting for video", "score": moment.get("score"), "error": None}
-    t = threading.Thread(target=_process, args=(job_id, streamer, moment, settings, manual),
+    t = threading.Thread(target=_process, args=(job_id, streamer, moment, settings, manual, force),
                          name=f"clip-{job_id}", daemon=True)
     t.start()
     return job_id
@@ -129,7 +128,12 @@ def _skip(job_id, out_dir, reason):
         pass
 
 
-def _process(job_id, streamer, moment, settings, manual):
+def _backlog():
+    with _jobs_lock:
+        return sum(1 for j in jobs.values() if j["state"] not in ("done", "failed", "skipped"))
+
+
+def _process(job_id, streamer, moment, settings, manual, force=False):
     out_dir = CLIPS / job_id
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -199,7 +203,10 @@ def _process(job_id, streamer, moment, settings, manual):
             recent = _recent_history()
 
             scenes_found = []
-            if settings["vision"]:
+            busy = _backlog() > settings["fast_when_queue_over"]
+            if busy:
+                log.info("%d clips waiting: skipping AI vision for this one to catch up", _backlog())
+            if settings["vision"] and not busy:
                 _set(job_id, state="watching the clip (AI vision)")
                 if low:
                     captions.unload()
@@ -232,12 +239,20 @@ def _process(job_id, streamer, moment, settings, manual):
             ai_window = meta_text.pop("window", None)
 
             # ---- is it worth posting?
-            score = meta_text.get("ai_score") or story.heuristic_score(moment.get("score"), chat_metrics,
-                                                                       moments, words)
-            if not manual and settings["min_clip_score"] and score < settings["min_clip_score"]:
+            app_score = story.heuristic_score(moment.get("score"), chat_metrics, moments, words)
+            score = meta_text.get("ai_score") or app_score
+            low_score = None
+            # small AI models are often too strict: a huge chat reaction or a high app score
+            # keeps the clip even when the AI scored it low
+            strong_chat = _score(moment.get("score")) >= settings["always_keep_hype"]
+            if (not manual and not force and settings["min_clip_score"] and score < settings["min_clip_score"]
+                    and app_score < settings["min_clip_score"] + 2 and not strong_chat):
                 why = meta_text.get("score_reason") or "not enough happening"
-                _skip(job_id, out_dir, f"score {score}/10 < {settings['min_clip_score']}: {why}")
-                return
+                low_score = f"score {score}/10 < {settings['min_clip_score']}: {why}"
+                if not settings["keep_low_score"]:
+                    _skip(job_id, out_dir, low_score)
+                    return
+                log.info("low score clip kept for review: %s", low_score)
 
             # ---- cut the best part
             start, end = (story.smart_window(moments, words, duration, ai_window, min_len, max_len)
@@ -333,6 +348,8 @@ def _process(job_id, streamer, moment, settings, manual):
             "peak_time": datetime.fromtimestamp(moment["peak_ts"]).strftime("%Y-%m-%d %H:%M:%S"),
             "score": moment.get("score"),
             "clip_score": score,
+            "app_score": app_score,
+            "low_score": low_score,
             "manual": manual,
             "duration": round(clip_len, 1),
             "trimmed": [start, end] if trim else None,

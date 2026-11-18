@@ -115,8 +115,11 @@ class HypeDetector:
         too_long = now - self.hype_start > 45
         if calm or too_long:
             self.in_hype = False
-            if self.peak_unique < s["min_unique_chatters"]:
-                return None  # a few people spamming isn't a hype moment (no cooldown either)
+            # a few people spamming isn't a hype moment; small chats need fewer different people
+            need = min(s["min_unique_chatters"], max(3, int(self.baseline * 2)))
+            if self.peak_unique < need:
+                return {"peak_ts": self.peak_ts, "score": round(self.peak_rate / floor, 1),
+                        "weak": f"only {self.peak_unique} different chatters (needs {need})"}
             self.last_clip = now
             # many different people reacting counts more than the same people spamming
             crowd = 0.6 + 0.4 * min(1.0, self.peak_unique_ratio / 0.6)

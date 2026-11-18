@@ -3,6 +3,7 @@ import asyncio
 import logging
 import re
 import time
+import uuid
 
 from . import clipper
 from .chat import READERS
@@ -67,6 +68,7 @@ class StreamerWorker:
         self.tasks = []
         self.clips_made = 0
         self.hype_scores = []
+        self.skipped = []
 
     def _video_status(self, s):
         self.video_status = s
@@ -95,6 +97,9 @@ class StreamerWorker:
         while not self.stop_event.is_set():
             await asyncio.sleep(1)
             moment = self.detector.tick()
+            if moment and moment.get("weak"):
+                self.record_skip(moment, moment["weak"])
+                continue
             if moment and self.auto_clip and not self._worth_it(moment):
                 continue
             if moment and self.auto_clip:
@@ -113,16 +118,37 @@ class StreamerWorker:
         del scores[:-30]
         s = self.settings
         if moment["score"] < s["min_hype_score"]:
-            log.info("%s: hype x%s below minimum x%s, skipped", self.channel_name, moment["score"], s["min_hype_score"])
+            self.record_skip(moment, f"hype x{moment['score']} below minimum x{s['min_hype_score']}")
             return False
-        if s["best_moments_only"] and len(scores) >= 6:
+        if s["best_moments_only"] and len(scores) >= 8:
             ranked = sorted(scores)
-            cut = ranked[int(len(ranked) * 0.6)]  # must beat 60% of this stream's recent hype moments
+            cut = ranked[int(len(ranked) * s["best_moments_percentile"] / 100)]
             if moment["score"] < cut:
-                log.info("%s: hype x%s weaker than usual (needs x%s), skipped", self.channel_name,
-                         moment["score"], cut)
+                self.record_skip(moment, f"hype x{moment['score']} weaker than this stream's usual (x{cut})")
                 return False
         return True
+
+    def record_skip(self, moment, reason):
+        """Skipped moments stay listed so you can still clip them while the video is in the buffer."""
+        log.info("%s: moment skipped: %s", self.channel_name, reason)
+        self.skipped.append({"id": uuid.uuid4().hex[:8], "peak_ts": moment["peak_ts"],
+                             "score": moment.get("score"), "reason": reason})
+        del self.skipped[:-15]
+
+    def rescue(self, skip_id):
+        """'Clip anyway' for a skipped moment."""
+        item = next((m for m in self.skipped if m["id"] == skip_id), None)
+        if not item:
+            raise ValueError("moment not found")
+        if not self.can_rescue(item):
+            raise ValueError("too late: that part of the video is no longer in the buffer")
+        self.skipped.remove(item)
+        self.clips_made += 1
+        return clipper.submit(self, {"peak_ts": item["peak_ts"], "score": item["score"]}, self.settings, force=True)
+
+    def can_rescue(self, item):
+        oldest = self.recorder.segments()
+        return bool(oldest) and item["peak_ts"] - self.settings["pre_seconds"] - 15 > oldest[0][0]
 
     def clip_now(self):
         """Manual clip: the last ~30 seconds plus 10 seconds after pressing."""
@@ -135,6 +161,7 @@ class StreamerWorker:
                 "topic": self.topic, "auto_clip": self.auto_clip, "show_chat": self.show_chat, "facecam": self.facecam, "chat_status": self.chat_status,
                 "video_status": self.video_status, "live": self.recorder.live, "clips_made": self.clips_made,
                 "video_gaps": self.recorder.gaps() if self.recorder.live else 0,
+                "skipped": [{**m, "can_clip": self.can_rescue(m)} for m in reversed(self.skipped)],
                 "quality": self.recorder.quality(),
                 **self.detector.snapshot()}
 

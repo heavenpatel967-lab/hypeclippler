@@ -100,6 +100,10 @@
   <h2>Processing</h2>
   <div class="jobs" id="jobs"></div>
 
+  <h2>Skipped moments</h2>
+  <div class="small" style="margin-bottom:6px">Moments the app didn't clip, with the reason. "Clip anyway" works while that part of the video is still in the buffer (about 5 minutes).</div>
+  <div class="jobs" id="skipped"></div>
+
   <h2>Clips</h2>
   <div class="clips" id="clips"></div>
 
@@ -231,6 +235,20 @@ async function refresh() {
     el.querySelector(".cam").textContent = s.facecam ? "🎥 webcam ✓" : "🎥 webcam";
     drawGraph(el.querySelector("canvas"), s.graph, s.baseline, sensitivity);
   }
+  const skipped = st.streamers.flatMap(s => (s.skipped || []).map(m => ({...m, key: s.key, name: s.name})))
+    .sort((a, b) => b.peak_ts - a.peak_ts).slice(0, 20);
+  const skHtml = skipped.length ? skipped.map(m => `<div class="job skipped"><b>${esc(m.name)}</b>
+      <span class="small">${new Date(m.peak_ts * 1000).toLocaleTimeString()}</span><span class="small">hype x${esc(m.score)}</span>
+      <span class="small">${esc(m.reason)}</span>
+      ${m.can_clip ? `<button style="margin-left:auto" data-rescue="${esc(m.key)}|${esc(m.id)}">✂ Clip anyway</button>` : `<span class="small" style="margin-left:auto">too old</span>`}</div>`).join("")
+    : `<div class="small">Nothing skipped.</div>`;
+  if (skHtml !== refresh._sk) {
+    refresh._sk = skHtml; $("#skipped").innerHTML = skHtml;
+    $("#skipped").querySelectorAll("[data-rescue]").forEach(b => b.onclick = async () => {
+      const [key, id] = b.dataset.rescue.split("|");
+      try { await api(`/api/streamers/${key}/rescue/${id}`, {method: "POST"}); toast("Clipping that moment..."); refresh(); } catch (e) { toast(e.message); }
+    });
+  }
   $("#jobs").innerHTML = st.jobs.length ? st.jobs.map(j => `<div class="job ${j.state === "failed" || j.state === "skipped" ? j.state : ""}"><b>${esc(j.streamer)}</b><span class="state">${esc(j.state)}</span><span class="small">score ${esc(j.score)}</span><span class="small">${esc(j.error || "")}</span></div>`).join("")
     : `<div class="small">Nothing in progress.</div>`;
   if (st.jobs.map(j => j.id + j.state).join() !== refresh._jobs) { refresh._jobs = st.jobs.map(j => j.id + j.state).join(); loadClips(); }
@@ -243,7 +261,8 @@ async function loadClips() {
   if (ids === clipIds) return;
   clipIds = ids;
   $("#clips").innerHTML = clips.length ? clips.map(c => `
-    <div class="card clip" data-id="${esc(c.id)}">
+    <div class="card clip" data-id="${esc(c.id)}" style="${c.low_score ? "opacity:.75;border-style:dashed" : ""}">
+      ${c.low_score ? `<div class="small" style="color:var(--hype);margin-bottom:6px">⚠ Review: ${esc(c.low_score)} <button class="approve">✓ Keep it</button></div>` : ""}
       <video src="${esc(c.files.vertical)}" poster="${esc(c.files.thumb)}" controls preload="none"></video>
       <div class="row small"><span class="plat ${esc(c.platform)}">${esc(c.platform)}</span> ${esc(c.streamer)} · ${esc(c.peak_time)} · ${esc(c.duration)}s · ${c.manual ? "manual" : "hype " + esc(c.score) + "x"}</div>
       <div class="title">${esc(c.title)}</div>
@@ -271,6 +290,7 @@ async function loadClips() {
   for (const el of document.querySelectorAll(".clip")) {
     const c = clips.find(x => x.id === el.dataset.id);
     el.querySelector(".copy").onclick = () => { navigator.clipboard.writeText(`${c.title}\n\n${c.description}\n\n${(c.hashtags || []).join(" ")}`); toast("Copied"); };
+    el.querySelector(".approve")?.addEventListener("click", async () => { await api(`/api/clips/${c.id}/approve`, {method:"POST"}); toast("Kept"); clipIds = ""; loadClips(); });
     el.querySelector(".save").onclick = async () => { try { const r = await api(`/api/clips/${c.id}/save`, {method:"POST"}); toast("Saved: " + r.path); } catch (e) { toast(e.message); } };
     for (const p of ["yt", "ig"]) el.querySelector("." + p).onclick = async () => {
       const name = p === "yt" ? "youtube" : "instagram";
@@ -288,7 +308,9 @@ const SETTINGS = [
   ["quality", "Recording quality (auto = 1080p up to 4 streamers, else 720p)", ["auto", "1080p60,1080p,720p60,best", "720p60,720p,720p30,best", "480p,best"]], ["layout", "Layout (facecam needs a webcam box per streamer)", ["facecam", "blur", "crop"]], ["video_zoom", "Video zoom in blur layout (1.0-1.4)"],
   ["zoom_punch", "Zoom punch on key moments", ["true", "false"]],
   ["min_clip_score", "Min AI clip score to keep (0-10, 0 = keep all)"], ["best_moments_only", "Best moments only", ["true", "false"]],
-  ["min_hype_score", "Min hype score"], ["min_unique_chatters", "Min different chatters at the peak"],
+  ["min_hype_score", "Min hype score"], ["best_moments_percentile", "Best moments: must beat % of recent hype"],
+  ["keep_low_score", "Keep low-score clips for review", ["true", "false"]], ["always_keep_hype", "Always keep hype above (x)"],
+  ["fast_when_queue_over", "Skip AI vision when more clips than this wait"], ["min_unique_chatters", "Min different chatters at the peak"],
   ["smart_trim", "AI picks the best cut", ["true", "false"]],
   ["download_folder", "Download folder (empty = Videos/HypeClipper)"], ["download_16x9", "Also save 16:9 version", ["true", "false"]],
   ["auto_upload_min_score", "Auto-upload only clips scored at least (0-10)"], ["upload_gap_minutes", "Minutes between auto uploads"],
@@ -355,7 +377,7 @@ $("#settingsForm").onsubmit = async e => {
   await loadSettings(); toast("Settings saved");
 };
 
-const UI_VERSION = "0.11.0";
+const UI_VERSION = "0.12.0";
 async function loadHealth() {
   const h = await api("/api/health");
   $("#restart").style.display = h.version === UI_VERSION ? "none" : "block";

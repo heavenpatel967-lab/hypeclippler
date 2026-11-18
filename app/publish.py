@@ -329,6 +329,8 @@ def enqueue(clip_id, platforms, manual=False):
 def on_clip_ready(meta, settings):
     """Called when a clip is finished: queues auto uploads, then auto download/delete."""
     score = meta.get("clip_score") or 0
+    if meta.get("low_score"):
+        return  # waits for your review on the dashboard
     good = score >= settings["auto_upload_min_score"] and not meta.get("manual")
     platforms = [p for p, key in (("youtube", "auto_upload_youtube"), ("instagram", "auto_upload_instagram"))
                  if settings[key] and good and connected()[p]["connected"]]

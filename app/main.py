@@ -363,3 +363,29 @@ def instagram_token(body: IgToken):
 def instagram_disconnect():
     publish.IG_TOKEN.unlink(missing_ok=True)
     return publish.connected()
+
+
+@app.post("/api/streamers/{key}/rescue/{skip_id}")
+def rescue_moment(key: str, skip_id: str):
+    w = manager.workers.get(key)
+    if not w:
+        raise HTTPException(404, "not found")
+    try:
+        return {"job": w.rescue(skip_id)}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/clips/{clip_id}/approve")
+def approve_clip(clip_id: str):
+    """Low-score clip you want to keep: removes the review mark and runs auto download/upload."""
+    path = publish._meta_path(clip_id)
+    meta = publish.load_meta(clip_id)
+    if not meta:
+        raise HTTPException(404, "clip not found")
+    meta["low_score"] = None
+    meta["approved"] = True
+    publish._write(path, meta)
+    publish.on_clip_ready({**meta, "clip_score": max(meta.get("clip_score") or 0, settings["auto_upload_min_score"])},
+                          settings)
+    return {"ok": True}
