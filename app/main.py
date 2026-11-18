@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import VERSION, clipper, llm, render, sfx, tools
+from . import VERSION, clipper, llm, render, resources, sfx, tools
 from .config import CLIPS, STATIC, Settings
 from .manager import Manager
 
@@ -138,6 +138,11 @@ async def health():
         out["encoder"] = (await asyncio.to_thread(tools.video_encoder))[1]
     except RuntimeError as e:
         out["ffmpeg_error"] = str(e)
+    free, total = resources.memory_mb()
+    workers = list(manager.workers.values())
+    hi = sum(1 for w in workers if w.recorder.quality().startswith("1080"))
+    out.update(ram_free_mb=free, ram_total_mb=total, streamers=len(workers),
+               bandwidth_mbps=hi * 7 + (len(workers) - hi) * 4)
     info = await asyncio.to_thread(llm.resolve, settings)
     out.update(ollama=bool(info["model"]), ollama_models=info["installed"], ai_model=info["model"],
                ai_vision=info["vision"], ai_error=info["error"])

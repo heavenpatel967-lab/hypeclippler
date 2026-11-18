@@ -31,13 +31,13 @@ def key_times(moments, duration, max_frames=6):
     return out
 
 
-def extract_frames(media: Path, times, out_dir: Path):
+def extract_frames(media: Path, times, out_dir: Path, width=768):
     frames = []
     for i, t in enumerate(times):
         path = out_dir / f"frame_{i}.jpg"
         try:
             tools.run([tools.ffmpeg(), "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{t:.2f}", "-i",
-                       str(media), "-frames:v", "1", "-vf", "scale=768:-2", "-q:v", "4", str(path)], timeout=60)
+                       str(media), "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "4", str(path)], timeout=60)
             frames.append((t, path))
         except Exception as e:  # noqa: BLE001
             log.debug("frame at %.1fs failed: %s", t, e)

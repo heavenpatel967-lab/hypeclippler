@@ -183,6 +183,25 @@ dashboard shows a red bar when that happens.
 | Recording quality | `720p60,720p,720p30,best` keeps bandwidth low. Use `1080p60,best` for sharper crop layouts. |
 | Whisper model | `large-v3-turbo` (best), `medium`, `small` (fastest). |
 
+## Memory and "WinError 8"
+
+`[WinError 8] Not enough memory resources` means Windows ran out of memory (RAM + page file).
+With many streamers, Chrome, Whisper and the AI model all at once, 24 GB fills up. The app now:
+- waits until at least 3 GB is free before working on a clip (shown as "waiting for free memory"),
+- retries a step that hit WinError 8 instead of failing the clip,
+- in **Low memory mode** (on by default) lets Whisper and the AI model take turns on the GPU and
+  unloads them after each clip, uses a smaller AI context and fewer, smaller frames,
+- keeps at most 6 clips waiting; weaker new moments are skipped while it's full,
+- records at 1080p only with up to 4 streamers (`auto` quality), 720p above that.
+
+The header shows free RAM and the internet speed all recordings need. If a card says
+"⚠ video dropped", that recording is missing pieces (choppy clips): your internet or PC can't keep
+up, so watch fewer streamers.
+
+If it still happens: let Windows manage the page file size (Settings > System > About > Advanced
+system settings > Performance > Advanced > Virtual memory > "Automatically manage"), close
+other heavy apps, or set Whisper model to `small`.
+
 ## How many streamers can I run?
 
 Recording only copies the stream (no re-encoding), so CPU use per streamer is tiny. The limit is

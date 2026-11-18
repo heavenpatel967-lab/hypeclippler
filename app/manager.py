@@ -21,7 +21,10 @@ def parse_channel(text: str, platform: str | None = None):
     if "kick.com/" in low:
         return "kick", re.split(r"kick\.com/", text, flags=re.I)[1].split("/")[0].split("?")[0].lower()
     if "youtube.com" in low or "youtu.be" in low:
-        return "youtube", text
+        m = re.search(r"(?:v=|youtu\.be/|/live/|/shorts/)([\w-]{10,})", text)
+        if m:  # a single live video: drop tracking parts like ?si=...
+            return "youtube", f"https://www.youtube.com/watch?v={m.group(1)}"
+        return "youtube", text.split("?")[0].rstrip("/")
     if text.startswith("@") and platform in ("twitch", "kick"):
         text = text[1:]
     elif text.startswith("@"):
@@ -38,7 +41,12 @@ def make_key(platform, channel):
 def display_name(platform, channel):
     if platform == "youtube":
         m = re.search(r"@([\w.-]+)", channel)
-        return m.group(1) if m else channel.rsplit("/", 1)[-1][:30]
+        if m:
+            return m.group(1)
+        m = re.search(r"v=([\w-]{10,})", channel)
+        if m:
+            return f"YouTube live {m.group(1)[:6]}"
+        return channel.rsplit("/", 1)[-1][:30]
     return channel
 
 
@@ -126,6 +134,8 @@ class StreamerWorker:
         return {"key": self.key, "platform": self.platform, "channel": self.channel, "name": self.channel_name,
                 "topic": self.topic, "auto_clip": self.auto_clip, "show_chat": self.show_chat, "facecam": self.facecam, "chat_status": self.chat_status,
                 "video_status": self.video_status, "live": self.recorder.live, "clips_made": self.clips_made,
+                "video_gaps": self.recorder.gaps() if self.recorder.live else 0,
+                "quality": self.recorder.quality(),
                 **self.detector.snapshot()}
 
     def config(self):
@@ -155,6 +165,7 @@ class Manager:
         if key in self.workers:
             raise ValueError("already watching this streamer")
         w = StreamerWorker(platform, channel, self.settings, topic, auto_clip, show_chat, facecam)
+        w.recorder.count_streamers = lambda: len(self.workers)
         self.workers[key] = w
         w.start()
         log.info("Watching %s on %s", w.channel_name, platform)
