@@ -49,6 +49,13 @@
   .empty { color:var(--dim); padding:20px; border:1px dashed var(--line); border-radius:12px; text-align:center; }
   .settings { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:12px; }
   .settings label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--dim); }
+  .sound .chips { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
+  .chip { display:flex; align-items:center; gap:4px; background:#22252e; border-radius:99px; padding:3px 4px 3px 10px; font-size:12px; }
+  .chip button { padding:1px 7px; border-radius:99px; font-size:11px; }
+  .chip.builtin { color:var(--dim); font-style:italic; }
+  .sound .add { display:flex; gap:6px; } .sound .add input[type=text] { flex:1; min-width:0; padding:6px 8px; font-size:12px; }
+  .sound .add button, .sound label.up { padding:6px 10px; font-size:12px; }
+  label.up { border:1px solid var(--line); border-radius:8px; cursor:pointer; white-space:nowrap; }
   .toast { position:fixed; bottom:20px; right:20px; background:#222632; border:1px solid var(--line); padding:10px 16px; border-radius:8px; display:none; max-width:420px; }
 </style>
 </head>
@@ -77,6 +84,10 @@
 
   <h2>Clips</h2>
   <div class="clips" id="clips"></div>
+
+  <h2>Sound effects</h2>
+  <div class="small" style="margin-bottom:10px">Each folder is a type of sound. The app picks sounds that fit the moment (fails get FAHHH, emotional damage, sad violin; shocks get vine boom, taco bell, metal pipe; laughs get laugh sounds...). Add sounds by uploading a file or pasting a link: a direct .mp3 link or a sound page like myinstants.com. Your sounds replace the built-in one in that folder.</div>
+  <div class="grid" id="sounds"></div>
 
   <h2>Settings</h2>
   <form id="settingsForm">
@@ -213,7 +224,7 @@ const SETTINGS = [
   ["quality", "Recording quality"], ["layout", "Layout", ["blur", "crop"]], ["burn_hook", "Top story captions", ["true", "false"]],
   ["sfx_enabled", "Sound effects", ["true", "false"]], ["max_sfx", "Max sound effects per clip"], ["sfx_volume", "Sound effect volume (0.1-1.5)"],
   ["sfx_intro_whoosh", "Whoosh at clip start", ["true", "false"]],
-  ["caption_font", "Caption font"], ["default_topic", "Default game/topic"],
+  ["caption_position", "Word captions position", ["above", "on_video", "below"]], ["caption_font", "Caption font"], ["default_topic", "Default game/topic"],
   ["whisper_model", "Whisper model", ["large-v3-turbo", "medium", "small", "base"]], ["whisper_device", "Whisper device", ["auto", "cuda", "cpu"]],
   ["ollama_model", "Ollama model"], ["ollama_url", "Ollama URL"],
   ["kick_pusher_key", "Kick chat key (change only if Kick breaks)"], ["kick_pusher_cluster", "Kick chat cluster"],
@@ -243,7 +254,47 @@ async function loadHealth() {
   ].join("");
 }
 
-loadSettings(); loadHealth(); refresh(); loadClips();
+const player = new Audio();
+async function loadSounds() {
+  const lib = await api("/api/sfx");
+  $("#sounds").innerHTML = lib.map(f => `
+    <div class="card sound" data-kind="${esc(f.kind)}">
+      <div class="row"><b>${esc(f.label)}</b><span class="small" style="margin-left:auto">${esc(f.kind)}/</span></div>
+      <div class="chips">${f.files.length ? f.files.map(x => `
+        <span class="chip ${x.builtin ? "builtin" : ""}">${x.builtin ? "built-in" : esc(x.name)}
+          <button data-play="${esc(x.url)}">▶</button>${x.builtin ? "" : `<button class="danger" data-del="${esc(x.name)}">✕</button>`}</span>`).join("")
+        : `<span class="small">empty, add a sound</span>`}</div>
+      <div class="add">
+        <input type="text" placeholder="paste link (myinstants page or .mp3)">
+        <button class="addUrl">Add</button>
+        <label class="up">Upload<input type="file" accept="audio/*" hidden></label>
+      </div>
+    </div>`).join("");
+  for (const card of document.querySelectorAll(".sound")) {
+    const kind = card.dataset.kind;
+    card.querySelectorAll("[data-play]").forEach(b => b.onclick = () => { player.src = b.dataset.play; player.play(); });
+    card.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
+      if (confirm(`Delete ${b.dataset.del}?`)) { await api(`/api/sfx/${kind}/${encodeURIComponent(b.dataset.del)}`, {method:"DELETE"}); loadSounds(); }
+    });
+    card.querySelector(".addUrl").onclick = async () => {
+      const input = card.querySelector("input[type=text]");
+      if (!input.value.trim()) return;
+      toast("Downloading sound...");
+      try { const r = await api(`/api/sfx/${kind}/url`, {method:"POST", body: JSON.stringify({url: input.value})}); toast("Added " + r.saved); loadSounds(); }
+      catch (e) { toast(e.message); }
+    };
+    card.querySelector("input[type=file]").onchange = async e => {
+      const file = e.target.files[0]; if (!file) return;
+      try {
+        const r = await fetch(`/api/sfx/${kind}/upload?name=${encodeURIComponent(file.name)}`, {method:"POST", body: file, headers: {"Content-Type": "application/octet-stream"}});
+        const data = await r.json(); if (!r.ok) throw new Error(data.detail || r.statusText);
+        toast("Added " + data.saved); loadSounds();
+      } catch (err) { toast(err.message); }
+    };
+  }
+}
+
+loadSettings(); loadHealth(); refresh(); loadClips(); loadSounds();
 setInterval(refresh, 1500);
 setInterval(loadHealth, 30000);
 </script>

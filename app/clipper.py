@@ -130,14 +130,15 @@ def _process(job_id, streamer, moment, settings, manual):
             sounds = []
             if settings["sfx_enabled"]:
                 sounds = story.pick_sfx(moments, duration, sfx.available(), settings["max_sfx"],
-                                        settings["sfx_intro_whoosh"])
+                                        settings["sfx_intro_whoosh"], seed=job_id)
 
             _set(job_id, state="rendering 9:16")
             layout = settings["layout"]
-            geo = captions.geometry(layout, show_chat)
+            geo = captions.geometry(layout, show_chat, settings["caption_position"])
             (out_dir / "captions.ass").write_text(
                 captions.build_ass(words, duration, meta_text["captions"], layout, settings["caption_font"],
-                                   settings["burn_hook"], chat_log, show_chat), encoding="utf-8")
+                                   settings["burn_hook"], chat_log, show_chat, settings["caption_position"]),
+                encoding="utf-8")
             vf = _render_filter(layout, geo["video_y"])
             has_audio = bool(peaks) or _has_audio(wide)
             plain = ["-filter_complex", vf, "-map", "[v]", "-map", "0:a?", "-c:a", "copy"]

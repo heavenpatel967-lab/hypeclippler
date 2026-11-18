@@ -39,17 +39,6 @@ SPEECH = [
     (re.compile(r"\b(run|go go|hide|they'?re coming|behind me)\b", re.I), "suspense"),
 ]
 
-# which sound folders fit each kind of moment, best first
-SFX_FOR = {
-    "laugh": ["laugh", "boom"],
-    "hype": ["airhorn", "boom"],
-    "shock": ["boom", "wow"],
-    "fail": ["fail", "bruh"],
-    "suspense": ["suspense"],
-    "bruh": ["bruh", "boom"],
-    "loud": ["boom"],
-}
-
 TOP_LINES = {
     "setup": ["Wait for it...", "Watch this", "He had no idea...", "Keep watching", "This is where it starts"],
     "setup_fail": ["This is about to go wrong", "He really thought he had it", "Nobody warned him..."],
@@ -254,22 +243,31 @@ def main_category(moments):
 
 
 # ------------------------------------------------------------- sound effects
-def pick_sfx(moments, duration, available: dict, max_sfx: int, intro_whoosh=True):
-    """available = {"boom": [paths], ...}. Returns [{time, sound, file, cat}]."""
-    rnd = random.Random(int(duration * 1000))
-    picks = []
+def pick_sfx(moments, duration, available: dict, max_sfx: int, intro_whoosh=True, sfx_for=None, seed=None):
+    """available = {"boom": {"files": [...], "own": bool}, ...}. Returns [{time, sound, file, cat}].
+    Picks a random fitting sound per moment, prefers folders with your own files,
+    and doesn't repeat the same kind of sound in one clip."""
+    from .sfx import SFX_FOR
+    sfx_for = sfx_for or SFX_FOR
+    rnd = random.Random(seed if seed is not None else int(duration * 1000))
+    picks, used = [], set()
     if intro_whoosh and available.get("whoosh"):
-        picks.append({"time": 0.0, "sound": "whoosh", "file": rnd.choice(available["whoosh"]), "cat": "intro"})
+        picks.append({"time": 0.0, "sound": "whoosh", "file": rnd.choice(available["whoosh"]["files"]),
+                      "cat": "intro"})
     for m in sorted(moments, key=lambda m: -m["strength"]):
         if len([p for p in picks if p["cat"] != "intro"]) >= max_sfx:
             break
         if any(abs(m["t"] - p["time"]) < 5 for p in picks if p["cat"] != "intro") or m["t"] < 1:
             continue
-        for sound in SFX_FOR.get(m["cat"], ["boom"]):
-            if available.get(sound):
-                lead = 1.6 if sound == "suspense" else 0.0   # risers should end on the action
-                picks.append({"time": round(max(0.0, m["t"] - lead), 2), "sound": sound,
-                              "file": rnd.choice(available[sound]), "cat": m["cat"]})
-                break
+        options = [k for k in sfx_for.get(m["cat"], ["boom"]) if k in available and k != "whoosh"]
+        fresh = [k for k in options if k not in used] or options
+        if not fresh:
+            continue
+        own = [k for k in fresh if available[k]["own"]]
+        sound = rnd.choice(own or fresh)
+        used.add(sound)
+        lead = 1.6 if sound == "suspense" else 0.0   # risers should end on the action
+        picks.append({"time": round(max(0.0, m["t"] - lead), 2), "sound": sound,
+                      "file": rnd.choice(available[sound]["files"]), "cat": m["cat"]})
     picks.sort(key=lambda p: p["time"])
     return picks

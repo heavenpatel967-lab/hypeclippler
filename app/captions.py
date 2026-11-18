@@ -102,17 +102,26 @@ def _chunks(words, max_words=3, max_len=1.6, gap=0.6):
         yield chunk
 
 
-def geometry(layout: str, show_chat: bool) -> dict:
+def geometry(layout: str, show_chat: bool, caption_position: str = "above") -> dict:
     """Where everything goes on the 1080x1920 frame.
-    video_y = top of the 16:9 video in blur layout (None = centered)."""
+
+    blur layout (16:9 video always centered, y 656-1264):
+        story captions  y≈250
+        word captions   above the video (y≈560), on the video (y≈1150) or below it
+        chat box        under the video (y 1300-1880)
+    video_y = top of the video (None = centered)."""
     if layout == "crop":
         if show_chat:
-            return {"video_y": None, "top_y": 230, "cap_y": 1060, "chat": (40, 1150, 1000, 720)}
-        return {"video_y": None, "top_y": 260, "cap_y": 1380, "chat": None}
+            cap = {"above": 470, "on_video": 1100, "below": 1100}.get(caption_position, 470)
+            return {"video_y": None, "top_y": 260, "cap_y": cap, "chat": (40, 1260, 1000, 620)}
+        cap = {"above": 470, "on_video": 1380, "below": 1380}.get(caption_position, 470)
+        return {"video_y": None, "top_y": 260, "cap_y": cap, "chat": None}
     if show_chat:
-        # video moves up, captions go right under it, chat fills the bottom
-        return {"video_y": 330, "top_y": 175, "cap_y": 1035, "chat": (40, 1115, 1000, 760)}
-    return {"video_y": None, "top_y": 420, "cap_y": 1480, "chat": None}
+        # "below" would sit on the chat box, so it goes above the video instead
+        cap = {"above": 560, "on_video": 1150, "below": 560}.get(caption_position, 560)
+        return {"video_y": None, "top_y": 250, "cap_y": cap, "chat": (40, 1300, 1000, 580)}
+    cap = {"above": 560, "on_video": 1150, "below": 1400}.get(caption_position, 560)
+    return {"video_y": None, "top_y": 250, "cap_y": cap, "chat": None}
 
 
 PALETTE = ["&H5050FF&", "&H50D0FF&", "&H60FF60&", "&HFFB050&", "&HFF70D0&", "&H50FFFF&", "&HB0B0FF&", "&HFF9090&"]
@@ -129,7 +138,7 @@ def _ass_color(hex_color, name):
     return PALETTE[sum(map(ord, name or "?")) % len(PALETTE)]
 
 
-def _chat_events(chat, duration, box, max_lines=11, per_sec=3.5):
+def _chat_events(chat, duration, box, max_lines=10, per_sec=3.5):
     """Scrolling chat box like the Twitch sidebar, newest message at the bottom."""
     x, y, w, h = box
     out = [
@@ -170,8 +179,8 @@ def _chat_events(chat, duration, box, max_lines=11, per_sec=3.5):
 
 
 def build_ass(words, duration: float, top_captions: list, layout: str, font: str, burn_top: bool,
-              chat=None, show_chat=False) -> str:
-    g = geometry(layout, show_chat)
+              chat=None, show_chat=False, caption_position="above") -> str:
+    g = geometry(layout, show_chat, caption_position)
     lines = [
         "[Script Info]", "ScriptType: v4.00+", "PlayResX: 1080", "PlayResY: 1920",
         "WrapStyle: 0", "ScaledBorderAndShadow: yes", "",

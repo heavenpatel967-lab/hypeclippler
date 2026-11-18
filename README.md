@@ -62,19 +62,40 @@ nearest loud moment in the audio.
 - **Sound effects:** up to 3 per clip (setting), at least 5 s apart, on the strongest moments, plus a
   whoosh at the start. Laughing gets a laugh sound, hype gets an airhorn, a fail gets a sad
   trombone, a shock gets a boom, and so on.
+- **Layout:** the video stays in the center. Story captions are at the top, word captions sit
+  just above the video (setting: above / on_video / below), and the chat box goes under the video.
 - **Chat box:** tick **show chat in clips** when adding a streamer, or the **chat** box on their card.
-  The video moves up, captions go under it, and the real chat from that moment scrolls in a box at
-  the bottom with users' name colors. Huge chats are thinned to about 3–4 lines per second so it
+  The real chat from that moment scrolls in a box under the video with users' name colors. Huge chats are thinned to about 3–4 lines per second so it
   stays readable.
 
-### Your own sound effects
+### Sound effects library
 
-The built-in sounds are simple generated ones so the app works offline. For better sounds, click
-**Open sound effects folder** in Settings and drop `.mp3`/`.wav` files into the matching folder:
-`boom`, `airhorn`, `laugh`, `wow`, `fail`, `bruh`, `suspense`, `whoosh`. When a folder has your
-files, the built-in sound in it is no longer used, and the app picks a random file each time.
-`laugh` and `bruh` have no built-in sound, so they only play once you add files (until then, a boom
-plays instead). Free sounds: https://pixabay.com/sound-effects/ (check each sound's license).
+The **Sound effects** section of the dashboard has one folder per sound type:
+
+| Folder | Used for |
+|---|---|
+| `fahh` (FAHHH), `emotional_damage`, `sad_violin`, `oh_no`, `error`, `fail` | fails, things going wrong |
+| `boom` (vine boom), `taco_bell`, `metal_pipe`, `huh`, `wow` | shocks, "NO WAY" moments |
+| `laugh`, `goofy`, `oh_no` | chat laughing |
+| `airhorn`, `rizz`, `wow` | hype, W moments |
+| `bruh`, `huh`, `sus`, `goofy` | bruh / confused moments |
+| `suspense`, `oh_no`, `sus` | scary, tense moments |
+| `metal_pipe`, `boom`, `taco_bell` | very loud moments (screams, crashes) |
+| `whoosh` | start of every clip |
+
+For each moment the app picks a random folder that fits, never the same kind twice in one clip,
+and prefers folders that contain your own sounds. Sounds longer than 4 s are cut and faded.
+
+**Adding sounds:** on a folder's card, paste a link and click **Add**, or click **Upload**.
+A link can be a direct `.mp3` link or a sound page such as a myinstants.com page (search
+"fahhh", "vine boom", "emotional damage", "metal pipe"...); the app finds the sound on the page.
+▶ previews a sound, ✕ deletes it.
+
+Some folders have a simple built-in sound so the app works offline (boom, airhorn, wow, fail,
+suspense, whoosh, goofy, metal pipe, error). Meme voice sounds like FAHHH, bruh, emotional
+damage or rizz can't be generated, so those folders stay empty until you add a file. Meme sounds
+on sites like myinstants are uploaded by users and may be copyrighted; free licensed sounds are
+on https://pixabay.com/sound-effects/.
 
 ## Tuning
 

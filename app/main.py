@@ -7,7 +7,7 @@ import sys
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -47,6 +47,8 @@ async def lifespan(_app):
 
 app = FastAPI(title="HypeClipper", lifespan=lifespan)
 app.mount("/clips", StaticFiles(directory=CLIPS), name="clips")
+sfx.SFX_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/sfx", StaticFiles(directory=sfx.SFX_DIR), name="sfx")
 
 
 class AddStreamer(BaseModel):
@@ -133,7 +135,7 @@ def save_settings(values: dict):
 @app.get("/api/health")
 async def health():
     out = {"ffmpeg": None, "encoder": None, "ollama": False, "ollama_models": [],
-           "sfx": {k: len(v) for k, v in sfx.available().items()}}
+           "sfx": {k: len(v["files"]) for k, v in sfx.available().items()}}
     try:
         out["ffmpeg"] = tools.ffmpeg()
         out["encoder"] = (await asyncio.to_thread(tools.video_encoder))[1]
@@ -164,3 +166,42 @@ def open_sfx_folder():
     except OSError:
         pass
     return {"path": path}
+
+
+class SoundUrl(BaseModel):
+    url: str
+
+
+@app.get("/api/sfx")
+def sound_library():
+    return sfx.library()
+
+
+@app.post("/api/sfx/{kind}/upload")
+async def upload_sound(kind: str, request: Request, name: str = "sound.mp3"):
+    data = await request.body()
+    try:
+        saved = await asyncio.to_thread(sfx.save_upload, kind, name, data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"saved": saved}
+
+
+@app.post("/api/sfx/{kind}/url")
+async def sound_from_url(kind: str, body: SoundUrl):
+    try:
+        saved = await asyncio.to_thread(sfx.import_url, kind, body.url.strip())
+    except (ValueError, httpx.HTTPError, OSError) as e:
+        raise HTTPException(400, f"could not get that sound: {e}")
+    return {"saved": saved}
+
+
+@app.delete("/api/sfx/{kind}/{name}")
+def delete_sound(kind: str, name: str):
+    try:
+        ok = sfx.delete(kind, name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not ok:
+        raise HTTPException(404, "not found (built-in sounds can't be deleted)")
+    return {"ok": True}
