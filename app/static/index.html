@@ -103,6 +103,26 @@
   <h2>Clips</h2>
   <div class="clips" id="clips"></div>
 
+  <h2>Downloads & uploads</h2>
+  <div class="grid">
+    <div class="card"><b>⬇ Downloads</b>
+      <div class="small" id="dlInfo"></div>
+      <div class="actions"><button id="openDl">Open download folder</button></div>
+      <div class="small">Auto download saves every finished clip (9:16 mp4 + a .txt with title, caption and hashtags). With "Delete after download" it then disappears from this dashboard. Turn both on in Quick switches.</div>
+    </div>
+    <div class="card"><b>▶ YouTube</b>
+      <div class="small" id="ytInfo"></div>
+      <div class="actions"><label class="up">1. Upload client_secret.json<input type="file" id="ytFile" accept=".json" hidden></label>
+        <button id="ytConnect" class="primary">2. Connect YouTube</button><button id="ytOff" class="danger">Disconnect</button></div>
+      <div class="small">One-time setup with a free Google Cloud project, see README "Uploading to YouTube".</div>
+    </div>
+    <div class="card"><b>📷 Instagram</b>
+      <div class="small" id="igInfo"></div>
+      <div class="actions"><input id="igToken" type="password" placeholder="paste Instagram access token"><button id="igSave" class="primary">Connect</button><button id="igOff" class="danger">Disconnect</button></div>
+      <div class="small">Needs a Professional (Creator/Business) account and a free Meta developer app, see README "Uploading to Instagram".</div>
+    </div>
+  </div>
+
   <h2>Sound effects</h2>
   <div class="small" style="margin-bottom:10px">Each folder is a type of sound. The app picks sounds that fit the moment (fails get FAHHH, emotional damage, sad violin; shocks get vine boom, taco bell, metal pipe; laughs get laugh sounds...). Add sounds by uploading a file or pasting a link: a direct .mp3 link or a sound page like myinstants.com. Your sounds replace the built-in one in that folder.</div>
   <div class="grid" id="sounds"></div>
@@ -230,12 +250,15 @@ async function loadClips() {
       <div class="desc">${esc(c.description)}</div>
       <div class="tags">${esc((c.hashtags || []).join(" "))}</div>
       ${c.story ? `<div class="small"><b>What happens:</b> ${esc(c.story)}</div>` : ""}
+      <div class="small">${Object.entries(c.uploads || {}).map(([p, u]) => u.url ? `<a href="${esc(u.url)}" target="_blank">${p} ✓</a>` : `${p}: ${esc(u.state)}${u.error ? " (" + esc(u.error) + ")" : ""}`).join(" · ")}${c.saved_to ? " · saved ✓" : ""}</div>
       ${c.headline ? `<div class="small"><b>Headline:</b> ${esc(c.headline)}</div>` : ""}
       <div class="small">${c.video_missing_s > 3 ? `⚠ ${esc(c.video_missing_s)}s of video was missing (internet/PC too slow) · ` : ""}${c.facecam ? `webcam: ${esc(c.facecam)} · ` : ""}${c.clip_score ? `<span class="score ${c.clip_score >= 7 ? "hi" : c.clip_score >= 5 ? "mid" : ""}" title="${esc(c.score_reason || "")}">${esc(c.clip_score)}/10</span> ${esc(c.score_reason || "")} · ` : ""}${esc(c.layout || "")} · ${c.show_chat ? "chat box ✓ · " : ""}${(c.sfx || []).length} sound effects · titles: ${esc(c.source || "?")}</div>
       <div class="actions">
         <button class="copy">Copy title + text</button>
         <a href="${esc(c.files.vertical)}" download="${esc(c.streamer + "_" + c.id)}_9x16.mp4"><button>⬇ 9:16</button></a>
         <a href="${esc(c.files.wide)}" download="${esc(c.streamer + "_" + c.id)}_16x9.mp4"><button>⬇ 16:9</button></a>
+        <button class="save" title="Copy to the download folder">💾 Save</button>
+        <button class="yt">▶ YouTube</button><button class="ig">📷 Instagram</button>
         <button class="danger del">Delete</button>
       </div>
       <details><summary>Captions, sounds, transcript & chat</summary>
@@ -248,6 +271,12 @@ async function loadClips() {
   for (const el of document.querySelectorAll(".clip")) {
     const c = clips.find(x => x.id === el.dataset.id);
     el.querySelector(".copy").onclick = () => { navigator.clipboard.writeText(`${c.title}\n\n${c.description}\n\n${(c.hashtags || []).join(" ")}`); toast("Copied"); };
+    el.querySelector(".save").onclick = async () => { try { const r = await api(`/api/clips/${c.id}/save`, {method:"POST"}); toast("Saved: " + r.path); } catch (e) { toast(e.message); } };
+    for (const p of ["yt", "ig"]) el.querySelector("." + p).onclick = async () => {
+      const name = p === "yt" ? "youtube" : "instagram";
+      if (!confirm(`Upload this clip to ${name} now?`)) return;
+      try { await api(`/api/clips/${c.id}/upload/${name}`, {method:"POST"}); toast("Uploading to " + name + "..."); clipIds = ""; setTimeout(loadClips, 1500); } catch (e) { toast(e.message); }
+    };
     el.querySelector(".del").onclick = async () => { if (confirm("Delete this clip?")) { await api(`/api/clips/${c.id}`, {method:"DELETE"}); loadClips(); } };
   }
 }
@@ -261,6 +290,9 @@ const SETTINGS = [
   ["min_clip_score", "Min AI clip score to keep (0-10, 0 = keep all)"], ["best_moments_only", "Best moments only", ["true", "false"]],
   ["min_hype_score", "Min hype score"], ["min_unique_chatters", "Min different chatters at the peak"],
   ["smart_trim", "AI picks the best cut", ["true", "false"]],
+  ["download_folder", "Download folder (empty = Videos/HypeClipper)"], ["download_16x9", "Also save 16:9 version", ["true", "false"]],
+  ["auto_upload_min_score", "Auto-upload only clips scored at least (0-10)"], ["upload_gap_minutes", "Minutes between auto uploads"],
+  ["yt_privacy", "YouTube visibility", ["public", "unlisted", "private"]],
   ["low_memory", "Low memory mode (stops WinError 8)", ["true", "false"]], ["min_free_ram_mb", "Wait until this much RAM is free (MB)"],
   ["max_queue", "Max clips waiting"],
   ["min_clip_seconds", "Shortest clip (s)"], ["max_clip_seconds", "Longest clip (s)"], ["word_captions", "Word captions", ["true", "false"]], ["burn_hook", "Top story captions", ["true", "false"]],
@@ -278,6 +310,8 @@ const QUICK = [
   ["sfx_enabled", "🔊 Sound effects"], ["sfx_intro_whoosh", "💨 Intro whoosh"], ["zoom_punch", "🔍 Zoom punch"],
   ["burn_hook", "📝 Headline/top captions"], ["word_captions", "💬 Word captions"], ["chat_box_enabled", "🗨 Chat box"],
   ["auto_facecam", "🎥 Auto webcam"], ["smart_trim", "✂ AI best cut"],
+  ["auto_download", "⬇ Auto download"], ["delete_after_download", "🗑 Delete after download"],
+  ["auto_upload_youtube", "▶ Auto YouTube"], ["auto_upload_instagram", "📷 Auto Instagram"],
 ];
 const EFFECTS = ["sfx_enabled", "sfx_intro_whoosh", "zoom_punch"];
 const REELS = {layout: "facecam", auto_facecam: true, no_facecam_layout: "crop", caption_mode: "title",
@@ -321,7 +355,7 @@ $("#settingsForm").onsubmit = async e => {
   await loadSettings(); toast("Settings saved");
 };
 
-const UI_VERSION = "0.10.0";
+const UI_VERSION = "0.11.0";
 async function loadHealth() {
   const h = await api("/api/health");
   $("#restart").style.display = h.version === UI_VERSION ? "none" : "block";
@@ -416,7 +450,31 @@ async function stopApp() {
   try { await api("/api/shutdown", {method: "POST"}); } catch {}
   document.body.innerHTML = '<div style="padding:60px;text-align:center;font-size:18px">HypeClipper is stopped. Double-click <b>start.bat</b> to start it again.</div>';
 }
-$("#stopApp").onclick = stopApp; $("#stopOld").onclick = stopApp;
+$("#stopApp").onclick = stopApp;
+
+async function loadPublish() {
+  const p = await api("/api/publish");
+  $("#dlInfo").textContent = "Folder: " + p.download_folder;
+  $("#ytInfo").innerHTML = p.youtube.connected ? `<span style="color:var(--ok)">Connected: ${esc(p.youtube.channel)}</span>`
+    : p.youtube.client ? "Client added. Click Connect YouTube." : "Not set up.";
+  $("#igInfo").innerHTML = p.instagram.connected ? `<span style="color:var(--ok)">Connected: @${esc(p.instagram.username)}</span>` : "Not connected.";
+}
+$("#openDl").onclick = () => api("/api/downloads/open", {method:"POST"});
+$("#ytFile").onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try { await api("/api/youtube/client", {method:"POST", body: JSON.stringify({data: JSON.parse(await f.text())})}); toast("Google client added. Now click Connect YouTube."); loadPublish(); }
+  catch (err) { toast(err.message); }
+};
+$("#ytConnect").onclick = () => { window.open("/api/youtube/connect", "_blank"); };
+$("#ytOff").onclick = async () => { await api("/api/youtube/disconnect", {method:"POST"}); loadPublish(); };
+$("#igSave").onclick = async () => {
+  try { const r = await api("/api/instagram/token", {method:"POST", body: JSON.stringify({token: $("#igToken").value})}); $("#igToken").value = ""; toast("Instagram connected: @" + r.username); loadPublish(); }
+  catch (e) { toast(e.message); }
+};
+$("#igOff").onclick = async () => { await api("/api/instagram/disconnect", {method:"POST"}); loadPublish(); };
+loadPublish(); setInterval(loadPublish, 30000); setInterval(() => { // refresh upload progress, but never while you're watching a clip
+  if ([...document.querySelectorAll(".clip video")].some(v => !v.paused)) return;
+  clipIds = ""; loadClips(); }, 15000); $("#stopOld").onclick = stopApp;
 
 loadSettings(); loadHealth(); refresh(); loadClips(); loadSounds();
 setInterval(refresh, 1500);

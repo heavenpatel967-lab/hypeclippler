@@ -1,5 +1,6 @@
 """Web dashboard + API. Start with:  python run.py"""
 import asyncio
+import html
 import logging
 import os
 import subprocess
@@ -8,11 +9,11 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import VERSION, clipper, llm, render, resources, sfx, tools
+from . import VERSION, clipper, llm, publish, render, resources, sfx, tools
 from .config import CLIPS, STATIC, Settings
 from .manager import Manager
 
@@ -34,6 +35,7 @@ async def lifespan(_app):
     loop = asyncio.get_running_loop()
     loop.run_in_executor(None, tools.video_encoder)  # warm up the check
     loop.run_in_executor(None, sfx.ensure_library)   # built-in sound effects + sfx folders
+    publish.start(settings)
     await manager.start()
     yield
     await manager.shutdown()
@@ -108,7 +110,12 @@ def clip_now(key: str):
 
 @app.get("/api/clips")
 def clips():
-    return clipper.list_clips()
+    out = clipper.list_clips()
+    for c in out:  # live upload progress
+        c["uploads"] = {**(c.get("uploads") or {}), **{k: v for k, v in publish.clip_status(c["id"]).items()
+                                                        if k != "download"}}
+        c["saved_to"] = (publish.clip_status(c["id"]).get("download") or {}).get("path")
+    return out
 
 
 @app.delete("/api/clips/{clip_id}")
@@ -249,3 +256,110 @@ async def shutdown():
             os._exit(0)
     asyncio.get_running_loop().create_task(bye())
     return {"ok": True}
+
+
+# ------------------------------------------------------------ saving / uploading
+class YtClient(BaseModel):
+    data: dict
+
+
+class IgToken(BaseModel):
+    token: str
+
+
+def _clip_or_404(clip_id):
+    try:
+        meta = publish.load_meta(clip_id)
+    except ValueError:
+        meta = None
+    if not meta:
+        raise HTTPException(404, "clip not found")
+    return meta
+
+
+@app.get("/api/publish")
+def publish_status():
+    return {**publish.connected(), "queue": publish.pending(),
+            "download_folder": str(publish.download_folder(settings))}
+
+
+@app.post("/api/clips/{clip_id}/save")
+def save_clip(clip_id: str):
+    _clip_or_404(clip_id)
+    return {"path": str(publish.save_to_folder(clip_id, settings))}
+
+
+@app.post("/api/clips/{clip_id}/upload/{platform}")
+def upload_clip(clip_id: str, platform: str):
+    _clip_or_404(clip_id)
+    if platform not in publish.UPLOADERS:
+        raise HTTPException(400, "unknown platform")
+    if not publish.connected()[platform]["connected"]:
+        raise HTTPException(400, f"connect {platform} first (Uploads section)")
+    publish.enqueue(clip_id, [platform], manual=True)
+    return {"ok": True}
+
+
+@app.post("/api/downloads/open")
+def open_downloads():
+    path = str(publish.download_folder(settings))
+    try:
+        if os.name == "nt":
+            os.startfile(path)  # noqa: S606
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+    except OSError:
+        pass
+    return {"path": path}
+
+
+@app.post("/api/youtube/client")
+def youtube_client(body: YtClient):
+    try:
+        publish.set_yt_client(body.data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return publish.connected()
+
+
+@app.get("/api/youtube/connect")
+def youtube_connect():
+    try:
+        return RedirectResponse(publish.yt_auth_url(settings))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/youtube/callback")
+def youtube_callback(code: str = "", state: str = "", error: str = ""):
+    if error:
+        return HTMLResponse(f"<h2>YouTube not connected: {html.escape(error)}</h2><p>Close this tab and try again.</p>")
+    try:
+        channel = publish.yt_finish(settings, code, state)
+    except Exception as e:  # noqa: BLE001
+        return HTMLResponse(f"<h2>YouTube not connected</h2><p>{html.escape(str(e)[:300])}</p>", status_code=400)
+    return HTMLResponse(f"<h2>YouTube connected: {html.escape(str(channel))}</h2><p>You can close this tab.</p>"
+                        "<script>setTimeout(() => location.href = '/', 2000)</script>")
+
+
+@app.post("/api/youtube/disconnect")
+def youtube_disconnect():
+    publish.YT_TOKEN.unlink(missing_ok=True)
+    return publish.connected()
+
+
+@app.post("/api/instagram/token")
+def instagram_token(body: IgToken):
+    try:
+        user = publish.ig_set_token(body.token)
+    except (ValueError, httpx.HTTPError) as e:
+        raise HTTPException(400, str(e)[:300])
+    return {"username": user, **publish.connected()}
+
+
+@app.post("/api/instagram/disconnect")
+def instagram_disconnect():
+    publish.IG_TOKEN.unlink(missing_ok=True)
+    return publish.connected()

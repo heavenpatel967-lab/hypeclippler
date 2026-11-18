@@ -63,6 +63,16 @@ DEFAULTS = {
     "ollama_url": "http://localhost:11434",
     "ollama_model": "auto",       # auto = best installed model (vision models first)
     "vision": True,               # let a vision model look at frames of the clip
+    # saving and uploading
+    "auto_download": False,          # copy every finished clip to the download folder
+    "download_folder": "",           # empty = Videos/HypeClipper in your user folder
+    "download_16x9": False,          # also save the 16:9 version
+    "delete_after_download": False,  # remove the clip from the dashboard once it's saved
+    "auto_upload_youtube": False,
+    "auto_upload_instagram": False,
+    "auto_upload_min_score": 7,      # only clips the AI scored this high are uploaded automatically
+    "upload_gap_minutes": 20,        # minimum time between two automatic uploads per platform
+    "yt_privacy": "public",          # public | unlisted | private
     # web dashboard
     "host": "127.0.0.1",
     "port": 8000,

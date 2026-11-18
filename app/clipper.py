@@ -356,6 +356,8 @@ def _process(job_id, streamer, moment, settings, manual):
         (out_dir / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
         _set(job_id, state="done")
         log.info("Clip ready: %s - %s (score %s/10)", streamer.channel_name, meta["title"], score)
+        from . import publish
+        publish.on_clip_ready(meta, settings)
     except Exception as e:  # noqa: BLE001
         log.exception("clip %s failed", job_id)
         _set(job_id, state="failed", error=str(e)[:300], ended=time.time())
