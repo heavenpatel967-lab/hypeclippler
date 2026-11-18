@@ -56,6 +56,14 @@
   .sound .add { display:flex; gap:6px; } .sound .add input[type=text] { flex:1; min-width:0; padding:6px 8px; font-size:12px; }
   .sound .add button, .sound label.up { padding:6px 10px; font-size:12px; }
   label.up { border:1px solid var(--line); border-radius:8px; cursor:pointer; white-space:nowrap; }
+  .modal { position:fixed; inset:0; background:#000c; display:none; align-items:center; justify-content:center; z-index:8; }
+  .modal .box { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; max-width:1000px; width:95%; }
+  .camwrap { position:relative; user-select:none; margin:10px 0; }
+  .camwrap img { width:100%; display:block; border-radius:6px; }
+  .camwrap canvas { position:absolute; inset:0; width:100%; height:100%; cursor:crosshair; }
+  .job.skipped .state { color:var(--dim); }
+  .score { font-weight:700; padding:1px 7px; border-radius:6px; background:#22252e; }
+  .score.hi { color:#000; background:var(--ok); } .score.mid { color:#000; background:var(--hype); }
   .toast { position:fixed; bottom:20px; right:20px; background:#222632; border:1px solid var(--line); padding:10px 16px; border-radius:8px; display:none; max-width:420px; }
 </style>
 </head>
@@ -97,6 +105,13 @@
   </form>
 </main>
 <div class="toast" id="toast"></div>
+<div class="modal" id="camModal"><div class="box">
+  <b id="camTitle">Webcam box</b>
+  <div class="small">Drag a rectangle around the streamer's webcam. Clips then use the facecam layout: webcam on top, gameplay below.</div>
+  <div class="camwrap"><img id="camImg" alt="stream snapshot"><canvas id="camCanvas"></canvas></div>
+  <div class="row"><button class="primary" id="camSave">Save</button><button id="camReload">New snapshot</button>
+    <button class="danger" id="camClear">Remove webcam box</button><button id="camClose" style="margin-left:auto">Close</button></div>
+</div></div>
 <div id="restart" style="display:none;position:fixed;top:0;left:0;right:0;background:#ff5c5c;color:#000;font-weight:700;padding:10px 24px;z-index:9;text-align:center">HypeClipper was updated but the old version is still running. Close the black HypeClipper window and double-click start.bat again.</div>
 
 <script>
@@ -135,6 +150,7 @@ function cardFor(s) {
         <input class="topicIn" placeholder="topic">
         <label class="toggle"><input type="checkbox" class="auto"> auto</label>
         <label class="toggle" title="Show live chat under the video in clips"><input type="checkbox" class="chatIn"> chat</label>
+        <button class="cam" title="Mark where the webcam is, for the facecam layout">🎥 webcam</button>
         <button class="danger remove" title="Stop watching">✕</button>
       </div>`;
     el.querySelector(".name").textContent = s.name;
@@ -142,6 +158,7 @@ function cardFor(s) {
     el.querySelector(".clipnow").onclick = async () => { try { await api(`/api/streamers/${s.key}/clip`, {method:"POST"}); toast("Clipping the last 30s + next 10s..."); refresh(); } catch (e) { toast(e.message); } };
     el.querySelector(".remove").onclick = async () => { if (confirm(`Stop watching ${s.name}?`)) { await api(`/api/streamers/${s.key}`, {method:"DELETE"}); el.remove(); delete cards[s.key]; } };
     el.querySelector(".auto").onchange = e => api(`/api/streamers/${s.key}`, {method:"PATCH", body: JSON.stringify({auto_clip: e.target.checked})});
+    el.querySelector(".cam").onclick = () => openCamPicker(s.key, s.name);
     el.querySelector(".chatIn").onchange = e => api(`/api/streamers/${s.key}`, {method:"PATCH", body: JSON.stringify({show_chat: e.target.checked})});
     el.querySelector(".topicIn").onchange = e => api(`/api/streamers/${s.key}`, {method:"PATCH", body: JSON.stringify({topic: e.target.value})});
     $("#streamers").appendChild(el);
@@ -164,6 +181,7 @@ function drawGraph(canvas, data, baseline, sens) {
 let sensitivity = 2.5;
 async function refresh() {
   let st; try { st = await api("/api/status"); } catch { return; }
+  window._lastStatus = st.streamers;
   const keys = new Set(st.streamers.map(s => s.key));
   for (const k of Object.keys(cards)) if (!keys.has(k)) { cards[k].remove(); delete cards[k]; }
   if (!st.streamers.length) $("#streamers").innerHTML = `<div class="empty">Add a streamer above. Tip: add everyone streaming GTA 6, each one runs on its own.</div>`;
@@ -179,9 +197,10 @@ async function refresh() {
     el.querySelector(".made").textContent = `${s.clips_made} clips`;
     el.querySelector(".auto").checked = s.auto_clip;
     el.querySelector(".chatIn").checked = s.show_chat;
+    el.querySelector(".cam").textContent = s.facecam ? "🎥 webcam ✓" : "🎥 webcam";
     drawGraph(el.querySelector("canvas"), s.graph, s.baseline, sensitivity);
   }
-  $("#jobs").innerHTML = st.jobs.length ? st.jobs.map(j => `<div class="job ${j.state === "failed" ? "failed" : ""}"><b>${esc(j.streamer)}</b><span class="state">${esc(j.state)}</span><span class="small">score ${esc(j.score)}</span><span class="small">${esc(j.error || "")}</span></div>`).join("")
+  $("#jobs").innerHTML = st.jobs.length ? st.jobs.map(j => `<div class="job ${j.state === "failed" || j.state === "skipped" ? j.state : ""}"><b>${esc(j.streamer)}</b><span class="state">${esc(j.state)}</span><span class="small">score ${esc(j.score)}</span><span class="small">${esc(j.error || "")}</span></div>`).join("")
     : `<div class="small">Nothing in progress.</div>`;
   if (st.jobs.map(j => j.id + j.state).join() !== refresh._jobs) { refresh._jobs = st.jobs.map(j => j.id + j.state).join(); loadClips(); }
 }
@@ -199,7 +218,8 @@ async function loadClips() {
       <div class="title">${esc(c.title)}</div>
       <div class="desc">${esc(c.description)}</div>
       <div class="tags">${esc((c.hashtags || []).join(" "))}</div>
-      <div class="small">${c.show_chat ? "chat box ✓ · " : ""}${(c.sfx || []).length} sound effects · titles: ${esc(c.source || "?")}</div>
+      ${c.story ? `<div class="small"><b>What happens:</b> ${esc(c.story)}</div>` : ""}
+      <div class="small">${c.clip_score ? `<span class="score ${c.clip_score >= 7 ? "hi" : c.clip_score >= 5 ? "mid" : ""}" title="${esc(c.score_reason || "")}">${esc(c.clip_score)}/10</span> ${esc(c.score_reason || "")} · ` : ""}${esc(c.layout || "")} · ${c.show_chat ? "chat box ✓ · " : ""}${(c.sfx || []).length} sound effects · titles: ${esc(c.source || "?")}</div>
       <div class="actions">
         <button class="copy">Copy title + text</button>
         <a href="${esc(c.files.vertical)}" download="${esc(c.streamer + "_" + c.id)}_9x16.mp4"><button>⬇ 9:16</button></a>
@@ -224,7 +244,11 @@ const SETTINGS = [
   ["pre_seconds", "Seconds before peak"], ["post_seconds", "Seconds after peak"],
   ["sensitivity", "Sensitivity (x normal chat speed, lower = more clips)"], ["min_msgs_per_sec", "Min chat speed (msgs/s) to count"],
   ["cooldown_seconds", "Cooldown between clips (s)"], ["warmup_seconds", "Warm-up (s)"], ["buffer_seconds", "Video buffer (s)"],
-  ["quality", "Recording quality"], ["layout", "Layout", ["blur", "crop"]], ["burn_hook", "Top story captions", ["true", "false"]],
+  ["quality", "Recording quality"], ["layout", "Layout (facecam needs a webcam box per streamer)", ["facecam", "blur", "crop"]], ["video_zoom", "Video zoom in blur layout (1.0-1.4)"],
+  ["zoom_punch", "Zoom punch on key moments", ["true", "false"]],
+  ["min_clip_score", "Min AI clip score to keep (0-10, 0 = keep all)"], ["best_moments_only", "Best moments only", ["true", "false"]],
+  ["min_hype_score", "Min hype score"], ["min_unique_chatters", "Min different chatters at the peak"],
+  ["smart_trim", "AI picks the best cut", ["true", "false"]], ["burn_hook", "Top story captions", ["true", "false"]],
   ["sfx_enabled", "Sound effects", ["true", "false"]], ["max_sfx", "Max sound effects per clip"], ["sfx_volume", "Sound effect volume (0.1-1.5)"],
   ["sfx_intro_whoosh", "Whoosh at clip start", ["true", "false"]],
   ["caption_position", "Word captions position", ["above", "on_video", "below"]],
@@ -247,7 +271,7 @@ $("#settingsForm").onsubmit = async e => {
   await loadSettings(); toast("Settings saved");
 };
 
-const UI_VERSION = "0.6.0";
+const UI_VERSION = "0.7.0";
 async function loadHealth() {
   const h = await api("/api/health");
   $("#restart").style.display = h.version === UI_VERSION ? "none" : "block";
@@ -299,6 +323,41 @@ async function loadSounds() {
     };
   }
 }
+
+// ---- webcam box picker
+let camKey = null, camBox = null, drag = null;
+function drawCam() {
+  const c = $("#camCanvas"), img = $("#camImg");
+  c.width = img.clientWidth; c.height = img.clientHeight;
+  const ctx = c.getContext("2d"); ctx.clearRect(0, 0, c.width, c.height);
+  if (!camBox) return;
+  const [x, y, w, h] = camBox;
+  ctx.fillStyle = "#0008"; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.clearRect(x * c.width, y * c.height, w * c.width, h * c.height);
+  ctx.strokeStyle = "#ffd400"; ctx.lineWidth = 3; ctx.strokeRect(x * c.width, y * c.height, w * c.width, h * c.height);
+}
+function openCamPicker(key, name) {
+  camKey = key; camBox = null;
+  const s = (window._lastStatus || []).find(x => x.key === key); if (s && s.facecam) camBox = s.facecam;
+  $("#camTitle").textContent = `Webcam box: ${name}`;
+  $("#camImg").onerror = () => toast("No video yet: the stream must be live and recording.");
+  $("#camImg").onload = drawCam;
+  $("#camImg").src = `/api/streamers/${key}/snapshot?t=${Date.now()}`;
+  $("#camModal").style.display = "flex";
+}
+const camPos = e => { const r = $("#camCanvas").getBoundingClientRect(); return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))]; };
+$("#camCanvas").onmousedown = e => { drag = camPos(e); };
+window.addEventListener("mousemove", e => { if (!drag) return; const [x, y] = camPos(e);
+  camBox = [Math.min(drag[0], x), Math.min(drag[1], y), Math.abs(x - drag[0]), Math.abs(y - drag[1])]; drawCam(); });
+window.addEventListener("mouseup", () => { drag = null; });
+$("#camReload").onclick = () => { $("#camImg").src = `/api/streamers/${camKey}/snapshot?t=${Date.now()}`; };
+$("#camClose").onclick = () => { $("#camModal").style.display = "none"; };
+$("#camSave").onclick = async () => {
+  if (!camBox) return toast("Drag a box around the webcam first");
+  try { await api(`/api/streamers/${camKey}/facecam`, {method: "POST", body: JSON.stringify({box: camBox})}); toast("Webcam box saved"); $("#camModal").style.display = "none"; refresh(); }
+  catch (e) { toast(e.message); }
+};
+$("#camClear").onclick = async () => { await api(`/api/streamers/${camKey}/facecam`, {method: "POST", body: JSON.stringify({box: null})}); camBox = null; drawCam(); toast("Removed"); refresh(); };
 
 loadSettings(); loadHealth(); refresh(); loadClips(); loadSounds();
 setInterval(refresh, 1500);

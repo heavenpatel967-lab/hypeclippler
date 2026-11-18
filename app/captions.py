@@ -232,8 +232,8 @@ def _top_caption_text(text, style, color, index):
 
 def build_ass(words, duration: float, top_captions: list, layout: str, font: str, burn_top: bool,
               chat=None, show_chat=False, caption_position="above", top_style="pop",
-              word_color="yellow") -> str:
-    g = geometry(layout, show_chat, caption_position)
+              word_color="yellow", geo=None) -> str:
+    g = geo or geometry(layout, show_chat, caption_position)
     hl = WORD_COLORS.get(word_color, WORD_COLORS["yellow"])
     if top_style == "box":
         top = f"Style: Top,{font},70,&H00FFFFFF,&H00FFFFFF,&H003C3CFF,&H00000000,-1,0,0,0,100,100,0,0,3,20,0,5,70,70,0,1"

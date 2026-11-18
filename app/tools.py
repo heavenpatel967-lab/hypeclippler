@@ -43,11 +43,12 @@ def video_encoder() -> list[str]:
     try:
         if subprocess.run(test, capture_output=True, timeout=30, creationflags=NO_WINDOW).returncode == 0:
             log.info("Using NVIDIA NVENC for video encoding")
-            return ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", "21", "-b:v", "0"]
+            return ["-c:v", "h264_nvenc", "-preset", "p6", "-tune", "hq", "-rc", "vbr", "-cq", "19", "-b:v", "0",
+                    "-maxrate", "20M", "-bufsize", "40M", "-spatial-aq", "1", "-profile:v", "high"]
     except Exception:  # noqa: BLE001
         pass
     log.info("NVENC not available, using libx264 (CPU)")
-    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21"]
+    return ["-c:v", "libx264", "-preset", "faster", "-crf", "19", "-profile:v", "high"]
 
 
 def run(cmd, timeout=600, cwd=None):

@@ -6,6 +6,7 @@ Picks a model automatically from what you have installed, so a wrong model name
 """
 import json
 import logging
+import re
 import threading
 import time
 
@@ -84,15 +85,31 @@ def resolve(settings, force=False):
         return info
 
 
-def generate(settings, prompt, images=None, as_json=False, timeout=150, temperature=0.8):
-    """Returns the model's text. Raises RuntimeError with a readable reason."""
+debug_log = threading.local()  # raw answers of the current clip, saved to ai_debug.txt
+
+
+def _log_raw(label, text):
+    if not hasattr(debug_log, "entries"):
+        debug_log.entries = []
+    debug_log.entries.append(f"===== {label} =====\n{text}\n")
+
+
+def take_debug():
+    entries = getattr(debug_log, "entries", [])
+    debug_log.entries = []
+    return "\n".join(entries)
+
+
+def generate(settings, prompt, images=None, fmt=None, timeout=150, temperature=0.8, num_predict=1500):
+    """Returns the model's answer text. Raises RuntimeError with a readable reason.
+    fmt: None, "json" or a JSON schema dict (Ollama structured outputs)."""
     info = resolve(settings)
     if not info["model"]:
         raise RuntimeError(info["error"] or "no Ollama model")
     body = {"model": info["model"], "prompt": prompt, "stream": False, "keep_alive": "15m",
-            "options": {"temperature": temperature, "num_ctx": 8192}}
-    if as_json:
-        body["format"] = "json"
+            "options": {"temperature": temperature, "num_ctx": 12288, "num_predict": num_predict}}
+    if fmt:
+        body["format"] = fmt
     if images and info["vision"]:
         body["images"] = images
     if info["thinking"]:
@@ -101,17 +118,57 @@ def generate(settings, prompt, images=None, as_json=False, timeout=150, temperat
     if r.status_code == 404:
         resolve(settings, force=True)
         raise RuntimeError(f"Ollama doesn't have model '{info['model']}'")
+    if r.status_code == 400 and "think" in r.text and body.pop("think", None) is not None:
+        r = httpx.post(_base(settings) + "/api/generate", json=body, timeout=timeout)  # model can't toggle thinking
     if r.status_code >= 400:
         raise RuntimeError(f"Ollama error {r.status_code}: {r.text[:150]}")
-    return r.json().get("response", "")
+    data = r.json()
+    text = data.get("response") or ""
+    if not text.strip() and data.get("thinking"):
+        text = data["thinking"]  # some thinking models put everything in the thinking field
+    return text
 
 
-def generate_json(settings, prompt, images=None, **kw):
-    text = generate(settings, prompt, images, as_json=True, **kw)
+def _extract_json(text):
+    text = re.sub(r"```(?:json)?", "", text or "")
     try:
         return json.loads(text)
     except ValueError:
-        start, end = text.find("{"), text.rfind("}")
-        if start >= 0 and end > start:
-            return json.loads(text[start:end + 1])
-        raise RuntimeError("Ollama didn't return JSON")
+        pass
+    start = text.find("{")
+    while start >= 0:  # first balanced {...} that parses
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start:i + 1])
+                    except ValueError:
+                        break
+        start = text.find("{", start + 1)
+    return None
+
+
+def generate_json(settings, prompt, images=None, schema=None, label="request", **kw):
+    """Tries structured output (schema), then plain JSON mode, then free text with the
+    JSON cut out of it. Small and 'thinking' models often fail one of these."""
+    attempts = ([schema] if schema else []) + ["json", None]
+    last = ""
+    for fmt in attempts:
+        p = prompt if fmt else prompt + "\n\nReply with ONLY the JSON object, nothing before or after it."
+        try:
+            text = generate(settings, p, images, fmt=fmt, **kw)
+        except RuntimeError as e:
+            if "doesn't have model" in str(e) or "not running" in str(e):
+                raise
+            last = str(e)
+            continue
+        _log_raw(f"{label} (format={'schema' if isinstance(fmt, dict) else fmt})", text[:4000])
+        data = _extract_json(text)
+        if isinstance(data, dict) and data:
+            return data
+        last = f"unreadable answer: {text.strip()[:80]!r}"
+    raise RuntimeError(f"AI answer wasn't usable JSON ({last})")

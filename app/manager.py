@@ -43,13 +43,14 @@ def display_name(platform, channel):
 
 
 class StreamerWorker:
-    def __init__(self, platform, channel, settings, topic="", auto_clip=True, show_chat=False):
+    def __init__(self, platform, channel, settings, topic="", auto_clip=True, show_chat=False, facecam=None):
         self.platform, self.channel, self.settings = platform, channel, settings
         self.key = make_key(platform, channel)
         self.channel_name = display_name(platform, channel)
         self.topic = topic
         self.auto_clip = auto_clip
         self.show_chat = show_chat  # draw the live chat box under the video in clips
+        self.facecam = facecam      # webcam box [x, y, w, h] (0-1) for the facecam layout
         self.detector = HypeDetector(settings)
         self.chat_status = "starting"
         self.video_status = "starting"
@@ -57,6 +58,7 @@ class StreamerWorker:
         self.stop_event = asyncio.Event()
         self.tasks = []
         self.clips_made = 0
+        self.hype_scores = []
 
     def _video_status(self, s):
         self.video_status = s
@@ -85,6 +87,8 @@ class StreamerWorker:
         while not self.stop_event.is_set():
             await asyncio.sleep(1)
             moment = self.detector.tick()
+            if moment and self.auto_clip and not self._worth_it(moment):
+                continue
             if moment and self.auto_clip:
                 if not self.recorder.live:
                     log.info("%s: hype detected but video is not recording, skipped", self.channel_name)
@@ -94,6 +98,24 @@ class StreamerWorker:
                 clipper.submit(self, moment, self.settings)
                 self.clips_made += 1
 
+    def _worth_it(self, moment):
+        """'Best moments only': skip hype that is weaker than what this stream usually gets."""
+        scores = self.hype_scores
+        scores.append(moment["score"])
+        del scores[:-30]
+        s = self.settings
+        if moment["score"] < s["min_hype_score"]:
+            log.info("%s: hype x%s below minimum x%s, skipped", self.channel_name, moment["score"], s["min_hype_score"])
+            return False
+        if s["best_moments_only"] and len(scores) >= 6:
+            ranked = sorted(scores)
+            cut = ranked[int(len(ranked) * 0.6)]  # must beat 60% of this stream's recent hype moments
+            if moment["score"] < cut:
+                log.info("%s: hype x%s weaker than usual (needs x%s), skipped", self.channel_name,
+                         moment["score"], cut)
+                return False
+        return True
+
     def clip_now(self):
         """Manual clip: the last ~30 seconds plus 10 seconds after pressing."""
         moment = {"peak_ts": time.time() - 10, "score": "manual"}
@@ -102,13 +124,13 @@ class StreamerWorker:
 
     def info(self):
         return {"key": self.key, "platform": self.platform, "channel": self.channel, "name": self.channel_name,
-                "topic": self.topic, "auto_clip": self.auto_clip, "show_chat": self.show_chat, "chat_status": self.chat_status,
+                "topic": self.topic, "auto_clip": self.auto_clip, "show_chat": self.show_chat, "facecam": self.facecam, "chat_status": self.chat_status,
                 "video_status": self.video_status, "live": self.recorder.live, "clips_made": self.clips_made,
                 **self.detector.snapshot()}
 
     def config(self):
         return {"platform": self.platform, "channel": self.channel, "topic": self.topic, "auto_clip": self.auto_clip,
-                "show_chat": self.show_chat}
+                "show_chat": self.show_chat, "facecam": self.facecam}
 
 
 class Manager:
@@ -120,19 +142,19 @@ class Manager:
         for s in self.settings["streamers"]:
             try:
                 await self.add(s["channel"], s.get("platform"), s.get("topic", ""), s.get("auto_clip", True),
-                               s.get("show_chat", False),
+                               s.get("show_chat", False), s.get("facecam"),
                                save=False)
             except Exception as e:  # noqa: BLE001
                 log.warning("could not start %s: %s", s, e)
 
-    async def add(self, channel, platform=None, topic="", auto_clip=True, show_chat=False, save=True):
+    async def add(self, channel, platform=None, topic="", auto_clip=True, show_chat=False, facecam=None, save=True):
         platform, channel = parse_channel(channel, platform)
         if platform not in READERS:
             raise ValueError(f"unknown platform {platform}")
         key = make_key(platform, channel)
         if key in self.workers:
             raise ValueError("already watching this streamer")
-        w = StreamerWorker(platform, channel, self.settings, topic, auto_clip, show_chat)
+        w = StreamerWorker(platform, channel, self.settings, topic, auto_clip, show_chat, facecam)
         self.workers[key] = w
         w.start()
         log.info("Watching %s on %s", w.channel_name, platform)
@@ -147,7 +169,7 @@ class Manager:
             self._save()
         return w is not None
 
-    def update(self, key, topic=None, auto_clip=None, show_chat=None):
+    def update(self, key, topic=None, auto_clip=None, show_chat=None, facecam=False):
         w = self.workers[key]
         if topic is not None:
             w.topic = topic
@@ -155,6 +177,8 @@ class Manager:
             w.auto_clip = bool(auto_clip)
         if show_chat is not None:
             w.show_chat = bool(show_chat)
+        if facecam is not False:  # None clears it
+            w.facecam = facecam
         self._save()
 
     def _save(self):
