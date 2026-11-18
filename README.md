@@ -23,10 +23,14 @@ Everything runs on your PC. No API keys, no subscriptions, no usage limits.
    - The first run installs ffmpeg (through winget). Close the window and run `start.bat` again.
    - The second run installs the Python packages, which takes a few minutes. Then the dashboard
      opens at http://localhost:8000.
-3. *(Optional, recommended)* Better titles with free local AI:
+3. *(Recommended)* Free local AI that **watches the clip** and writes specific captions, titles
+   and sound choices:
    - Install Ollama from https://ollama.com/download
-   - Open a terminal and run `ollama pull llama3.2:3b`
-   - The dashboard header changes to "Ollama ✓".
+   - Open a terminal and run `ollama pull qwen3-vl:4b` (3.3 GB, a vision model that fits an
+     8 GB card next to Whisper). `gemma4:e4b` is a good alternative.
+   - The dashboard header shows **AI: qwen3-vl:4b 👁 sees video**.
+   - The AI model setting is `auto`: the app uses the best model you have installed (vision
+     models first), so a wrong model name can't switch the AI off.
 
 The first clip downloads the Whisper `large-v3-turbo` model (~1.6 GB), one time only.
 On an RTX 3070 it captions a 40 s clip in a few seconds.
@@ -96,6 +100,20 @@ suspense, whoosh, goofy, metal pipe, error). Meme voice sounds like FAHHH, bruh,
 damage or rizz can't be generated, so those folders stay empty until you add a file. Meme sounds
 on sites like myinstants are uploaded by users and may be copyrighted; free licensed sounds are
 on https://pixabay.com/sound-effects/.
+
+### How the AI writes each clip
+
+1. Frames are taken at the start, at each key moment and near the end.
+2. The vision model describes each frame ("police cars surround the bank, red BUSTED text").
+3. The text model gets the whole timeline (what's on screen, what the streamer says, how chat
+   reacts, loud moments) and writes the title, 4–7 timed captions, the description, hashtags
+   and which sound effects go where (and why).
+4. Generic lines ("what just happened", "chat went crazy"...) and captions/titles used in the
+   last 12 clips are banned, so clips don't repeat each other.
+
+Without Ollama, template captions are used. They quote the streamer's own words at the key
+moments, use a larger set of lines, and also avoid the last clips' lines and sounds.
+Each clip's details show what the AI saw, the captions and why each sound was picked.
 
 ### Caption looks
 

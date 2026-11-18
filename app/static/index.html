@@ -208,6 +208,7 @@ async function loadClips() {
       </div>
       <details><summary>Captions, sounds, transcript & chat</summary>
         <p><b>Top captions:</b> ${esc((c.captions || []).map(x => `${x.time}s ${x.text}`).join(" · ") || c.hook)}</p>
+        <p><b>AI saw:</b> ${esc((c.scenes || []).map(x => `${x.time}s ${x.what}`).join(" · ") || "(no vision)")}</p>
         <p><b>Sound effects:</b> ${esc((c.sfx || []).map(x => `${x.time}s ${x.sound} (${x.for})`).join(" · ") || "none")}</p>
         <p><b>Speech:</b> ${esc(c.transcript || "(no speech detected, so no word captions)")}</p>
         <p><b>Chat:</b> ${esc((c.chat || []).join(" | "))}</p></details>
@@ -229,7 +230,7 @@ const SETTINGS = [
   ["caption_position", "Word captions position", ["above", "on_video", "below"]],
   ["top_caption_style", "Top caption style", ["pop", "box", "classic"]], ["word_color", "Word highlight colour", ["yellow", "green", "red", "cyan", "pink"]], ["caption_font", "Caption font"], ["default_topic", "Default game/topic"],
   ["whisper_model", "Whisper model", ["large-v3-turbo", "medium", "small", "base"]], ["whisper_device", "Whisper device", ["auto", "cuda", "cpu"]],
-  ["ollama_model", "Ollama model"], ["ollama_url", "Ollama URL"],
+  ["ollama_model", "AI model (auto = best installed)"], ["vision", "AI looks at the video", ["true", "false"]], ["ollama_url", "Ollama URL"],
 ];
 async function loadSettings() {
   const s = await api("/api/settings");
@@ -246,7 +247,7 @@ $("#settingsForm").onsubmit = async e => {
   await loadSettings(); toast("Settings saved");
 };
 
-const UI_VERSION = "0.5.0";
+const UI_VERSION = "0.6.0";
 async function loadHealth() {
   const h = await api("/api/health");
   $("#restart").style.display = h.version === UI_VERSION ? "none" : "block";
@@ -254,7 +255,8 @@ async function loadHealth() {
     h.ffmpeg ? `<span class="badge ok">ffmpeg ✓</span>` : `<span class="badge bad">ffmpeg missing</span>`,
     h.encoder ? `<span class="badge ${h.encoder.includes("nvenc") ? "ok" : ""}">encoder: ${esc(h.encoder)}</span>` : "",
     `<span class="badge" title="${esc(Object.entries(h.sfx || {}).map(([k, v]) => `${k}: ${v}`).join(", "))}">sounds: ${Object.keys(h.sfx || {}).length} kinds</span>`,
-    h.ollama ? `<span class="badge ok">Ollama ✓ ${esc(h.ollama_models.slice(0, 2).join(", "))}</span>` : `<span class="badge" title="Install Ollama for AI titles. Template titles are used until then.">Ollama off (template titles)</span>`,
+    h.ai_model ? `<span class="badge ok" title="${esc(h.ai_error || "")}">AI: ${esc(h.ai_model)}${h.ai_vision ? " 👁 sees video" : " (no vision)"}</span>`
+      : `<span class="badge bad" title="Template captions are used until this is fixed.">AI off: ${esc(h.ai_error || "Ollama not running")}</span>`,
   ].join("");
 }
 

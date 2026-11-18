@@ -42,7 +42,8 @@ DEFAULTS = {
     "whisper_device": "auto",    # auto | cuda | cpu
     # titles (local, free)
     "ollama_url": "http://localhost:11434",
-    "ollama_model": "llama3.2:3b",
+    "ollama_model": "auto",       # auto = best installed model (vision models first)
+    "vision": True,               # let a vision model look at frames of the clip
     # web dashboard
     "host": "127.0.0.1",
     "port": 8000,
