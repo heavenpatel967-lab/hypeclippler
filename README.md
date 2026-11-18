@@ -196,6 +196,21 @@ A chat spike alone isn't enough anymore. A moment has to pass four checks:
    (settings: Shortest / Longest clip).
    **✂ Clip now** clips are never skipped or trimmed.
 
+### When good clips get skipped
+
+- **Skipped moments** on the dashboard lists every moment that wasn't clipped and why (too few
+  different chatters, weaker than usual, queue full...). **✂ Clip anyway** makes the clip while
+  that part of the video is still in the 5-minute buffer.
+- Clips the AI scores low are **kept for review** (dashed border, "⚠ Review") instead of being
+  deleted. **✓ Keep it** approves one, and only then is it auto-downloaded/uploaded.
+- A clip is kept even with a low AI score when chat hype is x8 or more, or the app's own score
+  is clearly good (small AI models are often too strict).
+- When more than 3 clips are waiting, the AI skips looking at the video for the next ones so the
+  queue catches up instead of filling up.
+- Softer defaults: min AI score 4, min hype x2.5, "best moments" must beat 35% of the stream's
+  recent hype (was 60%), queue of 15. Small chats need fewer different chatters. Saved settings
+  that still had the old defaults are updated automatically.
+
 ### Layouts and video quality
 
 - **facecam** (default): click **🎥 webcam** on a streamer's card, drag a box around the webcam
