@@ -1,0 +1,10 @@
+fastapi>=0.110
+uvicorn>=0.29
+httpx>=0.27
+websockets>=13
+curl_cffi>=0.7
+streamlink>=6.8
+faster-whisper>=1.1
+# CUDA libraries for faster-whisper on NVIDIA GPUs (no CUDA toolkit install needed)
+nvidia-cublas-cu12>=12,<13; platform_system != "Darwin"
+nvidia-cudnn-cu12>=9,<10; platform_system != "Darwin"
