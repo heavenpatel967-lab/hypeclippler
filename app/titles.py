@@ -112,9 +112,11 @@ def generate(settings, ctx):
     sounds_list = "\n".join(f"- {k}: {v}" for k, v in ctx["sound_kinds"].items() if k != "whoosh") or "(none)"
     avoid = sorted(set(GENERIC + [c.lower() for c in ctx.get("recent_captions", [])]))[:40]
     d = ctx["duration"]
-    trim = (f'"start"/"end": the best part to post, in seconds of this recording (0-{d:.0f}). 15-50 s long. '
-            "Start a few seconds before the action so viewers understand it, end right after the "
-            "reaction. Cut boring parts." if ctx.get("trim") else f'"start": 0, "end": {d:.0f}.')
+    lo, hi = ctx.get("min_len", 30), ctx.get("max_len", 58)
+    trim = (f'"start"/"end": the best part to post, in seconds of this recording (0-{d:.0f}), '
+            f"{lo:.0f}-{hi:.0f} s long. Keep the build-up (10-15 s before the action) so viewers understand "
+            "what is going on, and keep the whole reaction afterwards. Only cut parts where nothing happens."
+            if ctx.get("trim") else f'"start": 0, "end": {d:.0f}.')
     prompt = f"""You are the best YouTube Shorts / TikTok clipper in the world. You decide if a live stream
 moment is worth posting and you edit it so people watch till the end.
 

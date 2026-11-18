@@ -428,8 +428,8 @@ def smart_window(moments, words, duration, ai=None, min_len=15.0, max_len=55.0):
     if not ai:
         if not strong:
             return 0.0, duration
-        start = max(0.0, strong[0]["t"] - 10.0)
-        end = min(duration, strong[-1]["t"] + 7.0)
+        start = max(0.0, strong[0]["t"] - 15.0)   # enough build-up to understand the moment
+        end = min(duration, strong[-1]["t"] + 10.0)  # and the full reaction
     if end - start < min_len:  # grow evenly
         pad = (min_len - (end - start)) / 2
         start, end = max(0.0, start - pad), min(duration, end + pad)

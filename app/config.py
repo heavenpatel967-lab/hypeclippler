@@ -27,6 +27,8 @@ DEFAULTS = {
     "best_moments_only": True,   # only clip moments stronger than most of this stream's recent hype
     "min_clip_score": 5,         # 0-10 virality score from the AI (or the app) needed to keep a clip, 0 = keep all
     "smart_trim": True,          # record a wider window and let the AI cut the best part
+    "min_clip_seconds": 30,      # shortest clip the cut may produce
+    "max_clip_seconds": 58,      # longest (Shorts limit is 60 s)
     # recording
     "quality": "1080p60,1080p,720p60,best",  # 1080p looks much sharper in 9:16 (≈6-8 Mbps per streamer)
     # output
@@ -36,6 +38,7 @@ DEFAULTS = {
     "zoom_punch": True,          # quick zoom-in on the key moments
     "caption_position": "above",  # word captions: above | on_video | below the video
     "burn_hook": True,
+    "word_captions": True,       # word-by-word captions of what the streamer says
     "top_caption_style": "pop",   # pop | box | classic
     "word_color": "yellow",       # yellow | green | red | cyan | pink           # burn the timed story captions at the top of the clip
     # sound effects (sfx/<kind>/ folders)

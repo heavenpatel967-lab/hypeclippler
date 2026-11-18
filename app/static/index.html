@@ -64,6 +64,14 @@
   .job.skipped .state { color:var(--dim); }
   .score { font-weight:700; padding:1px 7px; border-radius:6px; background:#22252e; }
   .score.hi { color:#000; background:var(--ok); } .score.mid { color:#000; background:var(--hype); }
+  .quick { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:16px; padding:10px 12px;
+           background:var(--card); border:1px solid var(--line); border-radius:12px; }
+  .quick .lbl { color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:.06em; margin-right:4px; }
+  .pill { border-radius:99px; padding:6px 14px; font-size:13px; }
+  .pill.on { background:#1f3a2a; border-color:#2f7a4f; color:var(--ok); }
+  .pill.off { color:var(--dim); text-decoration:line-through; }
+  .pill.mode { font-weight:700; }
+  .pill.mode.active { background:var(--hype); color:#000; border-color:var(--hype); }
   .toast { position:fixed; bottom:20px; right:20px; background:#222632; border:1px solid var(--line); padding:10px 16px; border-radius:8px; display:none; max-width:420px; }
 </style>
 </head>
@@ -74,6 +82,7 @@
   <div class="badges" id="health"></div>
 </header>
 <main>
+  <div class="quick" id="quick"></div>
   <form class="add" id="addForm">
     <select id="platform">
       <option value="twitch">Twitch</option><option value="kick">Kick</option><option value="youtube">YouTube</option>
@@ -214,7 +223,7 @@ async function loadClips() {
   $("#clips").innerHTML = clips.length ? clips.map(c => `
     <div class="card clip" data-id="${esc(c.id)}">
       <video src="${esc(c.files.vertical)}" poster="${esc(c.files.thumb)}" controls preload="none"></video>
-      <div class="row small"><span class="plat ${esc(c.platform)}">${esc(c.platform)}</span> ${esc(c.streamer)} · ${esc(c.peak_time)} · ${c.manual ? "manual" : "hype " + esc(c.score) + "x"}</div>
+      <div class="row small"><span class="plat ${esc(c.platform)}">${esc(c.platform)}</span> ${esc(c.streamer)} · ${esc(c.peak_time)} · ${esc(c.duration)}s · ${c.manual ? "manual" : "hype " + esc(c.score) + "x"}</div>
       <div class="title">${esc(c.title)}</div>
       <div class="desc">${esc(c.description)}</div>
       <div class="tags">${esc((c.hashtags || []).join(" "))}</div>
@@ -248,7 +257,8 @@ const SETTINGS = [
   ["zoom_punch", "Zoom punch on key moments", ["true", "false"]],
   ["min_clip_score", "Min AI clip score to keep (0-10, 0 = keep all)"], ["best_moments_only", "Best moments only", ["true", "false"]],
   ["min_hype_score", "Min hype score"], ["min_unique_chatters", "Min different chatters at the peak"],
-  ["smart_trim", "AI picks the best cut", ["true", "false"]], ["burn_hook", "Top story captions", ["true", "false"]],
+  ["smart_trim", "AI picks the best cut", ["true", "false"]],
+  ["min_clip_seconds", "Shortest clip (s)"], ["max_clip_seconds", "Longest clip (s)"], ["word_captions", "Word captions", ["true", "false"]], ["burn_hook", "Top story captions", ["true", "false"]],
   ["sfx_enabled", "Sound effects", ["true", "false"]], ["max_sfx", "Max sound effects per clip"], ["sfx_volume", "Sound effect volume (0.1-1.5)"],
   ["sfx_intro_whoosh", "Whoosh at clip start", ["true", "false"]],
   ["caption_position", "Word captions position", ["above", "on_video", "below"]],
@@ -256,9 +266,31 @@ const SETTINGS = [
   ["whisper_model", "Whisper model", ["large-v3-turbo", "medium", "small", "base"]], ["whisper_device", "Whisper device", ["auto", "cuda", "cpu"]],
   ["ollama_model", "AI model (auto = best installed)"], ["vision", "AI looks at the video", ["true", "false"]], ["ollama_url", "Ollama URL"],
 ];
+const QUICK = [
+  ["sfx_enabled", "🔊 Sound effects"], ["sfx_intro_whoosh", "💨 Intro whoosh"], ["zoom_punch", "🔍 Zoom punch"],
+  ["burn_hook", "📝 Top captions"], ["word_captions", "💬 Word captions"], ["smart_trim", "✂ AI best cut"],
+];
+const EFFECTS = ["sfx_enabled", "sfx_intro_whoosh", "zoom_punch"];
+function renderQuick(s) {
+  const clean = EFFECTS.every(k => !s[k]);
+  $("#quick").innerHTML = `<span class="lbl">Quick switches</span>
+    <button class="pill mode ${clean ? "active" : ""}" data-mode="clean" title="No sound effects, no whoosh, no zoom: just the real moment and reactions">🎯 Clean mode (no effects)</button>
+    <button class="pill mode ${!clean && EFFECTS.every(k => s[k]) ? "active" : ""}" data-mode="full" title="Sound effects, whoosh and zoom punches on">✨ Full edit</button>
+    ` + QUICK.map(([k, label]) => `<button class="pill ${s[k] ? "on" : "off"}" data-key="${k}">${label}</button>`).join("") +
+    `<span class="small">${s.min_clip_seconds}-${s.max_clip_seconds} s clips · applies to new clips</span>`;
+  $("#quick").querySelectorAll("[data-key]").forEach(b => b.onclick = async () => {
+    await api("/api/settings", {method: "POST", body: JSON.stringify({[b.dataset.key]: !s[b.dataset.key]})}); loadSettings();
+  });
+  $("#quick").querySelectorAll("[data-mode]").forEach(b => b.onclick = async () => {
+    const on = b.dataset.mode === "full";
+    await api("/api/settings", {method: "POST", body: JSON.stringify(Object.fromEntries(EFFECTS.map(k => [k, on])))});
+    toast(on ? "Full edit: sound effects + zoom on" : "Clean mode: no sound effects, no zoom"); loadSettings();
+  });
+}
 async function loadSettings() {
   const s = await api("/api/settings");
   sensitivity = s.sensitivity;
+  renderQuick(s);
   $("#settings").innerHTML = SETTINGS.map(([k, label, opts]) => `<label>${esc(label)}${opts
     ? `<select name="${k}">${opts.map(o => `<option ${String(s[k]) === o ? "selected" : ""}>${o}</option>`).join("")}</select>`
     : `<input name="${k}" value="${esc(s[k])}">`}</label>`).join("");
@@ -271,7 +303,7 @@ $("#settingsForm").onsubmit = async e => {
   await loadSettings(); toast("Settings saved");
 };
 
-const UI_VERSION = "0.7.0";
+const UI_VERSION = "0.8.0";
 async function loadHealth() {
   const h = await api("/api/health");
   $("#restart").style.display = h.version === UI_VERSION ? "none" : "block";
