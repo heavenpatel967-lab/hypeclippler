@@ -10,6 +10,7 @@ Chat reacts a few seconds after the action, so chat bursts are moved back in tim
 and snapped to the nearest loud audio moment.
 """
 import logging
+import os
 import random
 import re
 import subprocess
@@ -40,15 +41,24 @@ SPEECH = [
 ]
 
 TOP_LINES = {
-    "setup": ["Wait for it...", "Watch this", "He had no idea...", "Keep watching", "This is where it starts"],
-    "setup_fail": ["This is about to go wrong", "He really thought he had it", "Nobody warned him..."],
-    "laugh": ["Chat lost it", "He can't stop laughing", "I can't breathe", "Chat is crying", "This is too funny"],
-    "hype": ["LET'S GOOO", "Chat went crazy", "Absolute W", "That was insane", "Chat is going nuts"],
-    "shock": ["NO WAY", "Did that just happen?", "Nobody expected this", "Wait WHAT", "Everyone froze"],
-    "fail": ["It all went wrong", "Instant regret", "Massive L", "That did NOT work", "Oh no..."],
-    "suspense": ["Uh oh...", "Things got tense", "He's in trouble now", "RUN"],
-    "bruh": ["Bruh moment", "Why would he do that", "Chat is confused", "What was that?"],
-    "loud": ["WHAT JUST HAPPENED", "He's screaming", "That was loud"],
+    "setup": ["He had no idea...", "Watch his face", "This was supposed to be easy", "He thought he was safe",
+              "It started so normal", "Look at the corner", "Chat saw it first", "He was so confident",
+              "Just a normal day in {topic}", "Everything was fine...", "One wrong move"],
+    "setup_fail": ["This is about to go wrong", "He really thought he had it", "Nobody warned him...",
+                   "Confidence: 100%", "What could go wrong?", "He was SO sure"],
+    "laugh": ["He can't breathe", "Chat is in tears", "I'm crying", "This is too funny", "He's dying laughing",
+              "Not the laugh", "Chat can't recover", "Funniest thing today"],
+    "hype": ["LET'S GOOO", "Absolute W", "He actually did it", "Clean", "Chat is going nuts",
+             "Built different", "He's HIM", "Nobody does it like him"],
+    "shock": ["NO WAY", "Did that just happen?", "Wait WHAT", "Everyone froze", "He's speechless",
+              "Look at his face", "Chat is shaking", "This can't be real"],
+    "fail": ["Instant regret", "Massive L", "That did NOT work", "Oh no...", "It's over", "Pain",
+             "He's never living this down", "Worst timing ever", "Plan: failed"],
+    "suspense": ["Uh oh...", "Don't look behind you", "He's in trouble now", "RUN", "Heart rate: 200",
+                 "Too close"],
+    "bruh": ["Bruh", "Why would he do that", "Chat is confused", "What was that?", "Make it make sense",
+             "Explain this"],
+    "loud": ["His ears", "Volume warning", "He lost it", "Chat felt that", "He's yelling"],
 }
 
 
@@ -156,38 +166,70 @@ def build_moments(chat, words, peaks, duration):
 
 
 # -------------------------------------------------------------- top captions
-def fallback_captions(moments, duration, main_cat, seed=None):
+FILLERS = {"um", "uh", "like", "the", "a", "and", "so", "yeah", "okay", "ok", "i", "you", "it"}
+
+
+def quote_near(words, t, before=2.5, after=1.5, max_words=6):
+    """The streamer's own words around time t, cleaned up for a caption."""
+    near = [w["word"] for w in words if t - before <= w["start"] <= t + after]
+    text = re.sub(r"[^\w' ?!]", "", " ".join(near)).strip()
+    parts = text.split()
+    while parts and parts[0].lower() in FILLERS:
+        parts.pop(0)
+    if len(parts) < 2:
+        return None
+    return " ".join(parts[-max_words:])
+
+
+def best_quote(words, moments):
+    """The streamer's most dramatic line in the clip (for titles)."""
+    for m in sorted(moments, key=lambda m: -m["strength"]):
+        q = quote_near(words, m["t"])
+        if q:
+            return q
+    return None
+
+
+def fallback_captions(moments, duration, main_cat, seed=None, words=None, avoid=(), topic=""):
     rnd = random.Random(seed)
+    words = words or []
+    avoid = {a.lower() for a in avoid}
+
+    def pick(pool):
+        fresh = [x for x in pool if x.lower() not in avoid and x.lower() not in used]
+        line = rnd.choice(fresh or pool)
+        used.add(line.lower())
+        return line.replace("{topic}", topic or "this game")
+
+    used = set()
     setup = TOP_LINES["setup_fail" if main_cat == "fail" else "setup"]
-    caps = [{"time": 0.0, "text": rnd.choice(setup)}]
-    used_lines = set()
+    caps = [{"time": 0.0, "text": pick(setup), "cat": "setup"}]
     for m in sorted(moments, key=lambda m: -m["strength"])[:8]:
         t = max(1.5, m["t"] - 0.3)
         if any(abs(t - c["time"]) < 3.5 for c in caps):
             continue
+        quote = quote_near(words, m["t"]) if m["src"] in ("speech", "audio") or rnd.random() < 0.5 else None
         sample = m.get("sample", "").strip()
-        if m["src"] == "chat" and sample and len(sample) <= 18 and rnd.random() < 0.35:
+        if quote and len(quote) <= 32 and quote.lower() not in used:
+            line = f'"{quote}"'
+            used.add(quote.lower())
+        elif m["src"] == "chat" and sample and len(sample) <= 18 and rnd.random() < 0.3:
             line = f'Chat: "{sample}"'
         else:
-            pool = [x for x in TOP_LINES.get(m["cat"], TOP_LINES["shock"]) if x not in used_lines] or TOP_LINES["shock"]
-            line = rnd.choice(pool)
-        used_lines.add(line)
-        caps.append({"time": round(t, 2), "text": line})
+            line = pick(TOP_LINES.get(m["cat"], TOP_LINES["shock"]))
+        caps.append({"time": round(t, 2), "text": line, "cat": m["cat"]})
     caps.sort(key=lambda c: c["time"])
     # long gap with nothing happening: add a line so the top never feels frozen.
-    # Before the biggest moment it teases, after it it keeps the reaction going.
     peak_t = max(moments, key=lambda m: m["strength"])["t"] if moments else duration / 2
-    after_pool = [x for x in TOP_LINES.get(main_cat, TOP_LINES["hype"]) if x not in used_lines] \
-        or ["Chat will never recover"]
     filled = []
     for i, c in enumerate(caps):
         filled.append(c)
         nxt = caps[i + 1]["time"] if i + 1 < len(caps) else duration
         if nxt - c["time"] > 12:
             t = round(c["time"] + (nxt - c["time"]) / 2, 2)
-            text = rnd.choice(["Keep watching...", "It gets worse", "Wait for it..."]) if t < peak_t \
-                else rnd.choice(after_pool)
-            filled.append({"time": t, "text": text})
+            pool = ["Keep watching...", "It gets worse", "Here it comes", "Watch closely"] if t < peak_t \
+                else TOP_LINES.get(main_cat, TOP_LINES["hype"])
+            filled.append({"time": t, "text": pick(pool), "cat": main_cat})
     return filled
 
 
@@ -213,9 +255,9 @@ def clean_captions(raw, duration, fallback):
     return spaced[:8]
 
 
-def timeline_text(moments, words, duration):
+def timeline_text(moments, words, duration, scenes=None):
     """Short timeline for the AI prompt."""
-    lines = []
+    lines = [(sc["time"], f"on screen: {sc['what']}") for sc in scenes or []]
     chunk, start = [], None
     for w in words:
         if start is None:
@@ -230,7 +272,7 @@ def timeline_text(moments, words, duration):
         what = {"chat": "chat reacts", "speech": "streamer reacts", "audio": "very loud moment"}[m["src"]]
         lines.append((m["t"], f"{what}: {m['cat']}" + (f' ("{m["sample"]}")' if m.get("sample") else "")))
     lines.sort()
-    return "\n".join(f"{t:5.1f}s  {text}" for t, text in lines[:60]) + f"\nclip length: {duration:.0f}s"
+    return "\n".join(f"{t:5.1f}s  {text}" for t, text in lines[:70]) + f"\nclip length: {duration:.0f}s"
 
 
 def main_category(moments):
@@ -243,31 +285,57 @@ def main_category(moments):
 
 
 # ------------------------------------------------------------- sound effects
-def pick_sfx(moments, duration, available: dict, max_sfx: int, intro_whoosh=True, sfx_for=None, seed=None):
+def _choose_file(files, recent_files, rnd):
+    fresh = [f for f in files if os.path.basename(f) not in recent_files]
+    return rnd.choice(fresh or files)
+
+
+def pick_sfx(moments, duration, available: dict, max_sfx: int, intro_whoosh=True, sfx_for=None, seed=None,
+             recent_kinds=(), recent_files=(), ai_picks=None):
     """available = {"boom": {"files": [...], "own": bool}, ...}. Returns [{time, sound, file, cat}].
-    Picks a random fitting sound per moment, prefers folders with your own files,
-    and doesn't repeat the same kind of sound in one clip."""
+
+    If the AI chose sounds (ai_picks = [{time, sound}]), those are used. Otherwise a fitting
+    sound is picked per moment. Either way: no kind twice in one clip, kinds and files used
+    in the last clips are avoided, and folders with your own sounds are preferred."""
     from .sfx import SFX_FOR
     sfx_for = sfx_for or SFX_FOR
     rnd = random.Random(seed if seed is not None else int(duration * 1000))
+    recent_kinds, recent_files = list(recent_kinds), set(recent_files)
     picks, used = [], set()
     if intro_whoosh and available.get("whoosh"):
-        picks.append({"time": 0.0, "sound": "whoosh", "file": rnd.choice(available["whoosh"]["files"]),
-                      "cat": "intro"})
+        picks.append({"time": 0.0, "sound": "whoosh", "cat": "intro",
+                      "file": _choose_file(available["whoosh"]["files"], recent_files, rnd)})
+    if ai_picks:
+        for p in ai_picks:
+            if p["sound"] in available and p["sound"] not in used:
+                used.add(p["sound"])
+                lead = 1.6 if p["sound"] == "suspense" else 0.0
+                picks.append({"time": round(max(0.0, p["time"] - lead), 2), "sound": p["sound"], "cat": "ai",
+                              "why": p.get("why", ""),
+                              "file": _choose_file(available[p["sound"]]["files"], recent_files, rnd)})
+        if len(picks) > (1 if intro_whoosh else 0):
+            picks.sort(key=lambda p: p["time"])
+            return picks
     for m in sorted(moments, key=lambda m: -m["strength"]):
         if len([p for p in picks if p["cat"] != "intro"]) >= max_sfx:
             break
         if any(abs(m["t"] - p["time"]) < 5 for p in picks if p["cat"] != "intro") or m["t"] < 1:
             continue
         options = [k for k in sfx_for.get(m["cat"], ["boom"]) if k in available and k != "whoosh"]
-        fresh = [k for k in options if k not in used] or options
-        if not fresh:
+        options = [k for k in options if k not in used] or options
+        if not options:
             continue
-        own = [k for k in fresh if available[k]["own"]]
-        sound = rnd.choice(own or fresh)
+        # weight: own sounds x3, kinds used in recent clips count less (the more recent, the less)
+        weights = []
+        for k in options:
+            w = 3.0 if available[k]["own"] else 1.0
+            if k in recent_kinds:
+                w *= 0.15 + 0.85 * (recent_kinds[::-1].index(k) / max(1, len(recent_kinds)))
+            weights.append(w)
+        sound = rnd.choices(options, weights=weights, k=1)[0]
         used.add(sound)
         lead = 1.6 if sound == "suspense" else 0.0   # risers should end on the action
-        picks.append({"time": round(max(0.0, m["t"] - lead), 2), "sound": sound,
-                      "file": rnd.choice(available[sound]["files"]), "cat": m["cat"]})
+        picks.append({"time": round(max(0.0, m["t"] - lead), 2), "sound": sound, "cat": m["cat"],
+                      "file": _choose_file(available[sound]["files"], recent_files, rnd)})
     picks.sort(key=lambda p: p["time"])
     return picks

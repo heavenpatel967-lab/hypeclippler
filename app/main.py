@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import VERSION, clipper, sfx, tools
+from . import VERSION, clipper, llm, sfx, tools
 from .config import CLIPS, STATIC, Settings
 from .manager import Manager
 
@@ -134,13 +134,9 @@ async def health():
         out["encoder"] = (await asyncio.to_thread(tools.video_encoder))[1]
     except RuntimeError as e:
         out["ffmpeg_error"] = str(e)
-    try:
-        async with httpx.AsyncClient(timeout=3) as c:
-            r = await c.get(settings["ollama_url"].rstrip("/") + "/api/tags")
-            out["ollama"] = r.status_code == 200
-            out["ollama_models"] = [m["name"] for m in r.json().get("models", [])]
-    except Exception:  # noqa: BLE001
-        pass
+    info = await asyncio.to_thread(llm.resolve, settings)
+    out.update(ollama=bool(info["model"]), ollama_models=info["installed"], ai_model=info["model"],
+               ai_vision=info["vision"], ai_error=info["error"])
     return out
 
 

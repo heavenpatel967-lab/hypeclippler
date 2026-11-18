@@ -1,104 +1,151 @@
-"""Titles, hooks, descriptions and hashtags.
+"""Titles, story captions, descriptions, hashtags and sound choices.
 
-Uses a local Ollama model (free, unlimited). If Ollama isn't running, builds them
-from the chat messages and transcript instead, so clipping never stops.
+With Ollama: the model gets the full clip timeline (what's on screen from the vision
+model, what the streamer says, how chat reacts, loud moments) and writes everything
+specific to that clip. Without Ollama: templates built from the same timeline, quoting
+the streamer's own words, and avoiding lines used in recent clips.
 """
-import json
 import logging
+import random
 import re
-from collections import Counter
 
-import httpx
+from . import llm
 
 log = logging.getLogger("titles")
 
-STOP = set("""a an the and or but is are was were be been to of in on at for with it its this that
-i you he she we they me my your our their im u ur so just like what who how why when do does did
-not no yes yeah oh ok okay lol get got go going have has had can cant dont will would could should
-there here from up out about all if then than too very really one his her him them us chat""".split())
+GENERIC = ["what just happened", "chat went crazy", "chat went absolutely crazy", "nobody expected this",
+           "this went so wrong", "chat could not stop laughing", "wait for it", "you won't believe",
+           "insane moment", "that was loud", "he's screaming", "watch till the end"]
 
-EMOTE_HOOKS = [
-    (re.compile(r"\b(kekw|lul|lulw|lmao|lmfao|omegalul|icant|hahaha+|xd)\b", re.I), "Chat could not stop laughing"),
-    (re.compile(r"\b(pog|poggers|pogu|pogchamp|letsgo|lets go+|w+)\b", re.I), "Chat went absolutely crazy"),
-    (re.compile(r"\b(wtf|no way|noway|holy|omg|insane|what)\b", re.I), "Nobody expected this"),
-    (re.compile(r"\b(monkas|scary|jumpscare)\b", re.I), "This got scary fast"),
-    (re.compile(r"\b(l+|rip|sadge|f)\b", re.I), "This went so wrong"),
-]
+TITLE_TEMPLATES = {
+    "laugh": ["{s} can't stop laughing at this", "{s} lost it after this", "I can't believe {s} did this",
+              "{s} had chat in tears"],
+    "hype": ["{s} actually pulled this off", "{s} with the cleanest play", "{s} went off here",
+             "This {s} moment is insane"],
+    "shock": ["{s} did NOT see this coming", "{s}'s reaction says it all", "Nobody was ready for this {s} moment",
+              "{s} froze after this"],
+    "fail": ["Everything went wrong for {s}", "{s} instantly regretted this", "This did not go to plan for {s}",
+             "{s} will never live this down"],
+    "suspense": ["{s} almost got caught", "{s} was so close", "The most stressful {s} moment"],
+    "bruh": ["{s} what are you doing", "Why would {s} do this", "{s} confused everyone"],
+    "loud": ["{s} screamed so loud", "{s} lost his mind", "{s}'s loudest moment"],
+}
 
 
-def _fallback(streamer, platform, topic, chat, transcript, score):
-    joined = " ".join(chat)
-    hook = "Chat went absolutely crazy"
-    best = 0
-    for rx, text in EMOTE_HOOKS:
-        n = len(rx.findall(joined))
-        if n > best:
-            best, hook = n, text
-    words = [w for w in re.findall(r"[a-zA-Z][a-zA-Z0-9']{2,}", transcript.lower()) if w not in STOP]
-    key = Counter(words).most_common(1)
-    topic_part = f" in {topic}" if topic else ""
-    title = f"{streamer} {hook.lower()}{topic_part}"
-    if key:
-        title = f"{streamer} {hook.lower()}{topic_part} ({key[0][0]})"
+def _tags(streamer, platform, topic):
     tags = ["#" + re.sub(r"\W", "", streamer.lower()), f"#{platform}", "#shorts", "#clips", "#viral"]
     if topic:
         tags.insert(1, "#" + re.sub(r"\W", "", topic.lower()))
+    return tags
+
+
+def _fallback(ctx):
+    s, topic, main = ctx["streamer"], ctx["topic"], ctx["main_cat"]
+    rnd = random.Random(ctx.get("seed"))
+    quote = ctx.get("quote")
+    recent = {t.lower() for t in ctx.get("recent_titles", [])}
+    options = [t.format(s=s) for t in TITLE_TEMPLATES.get(main, TITLE_TEMPLATES["shock"])]
+    if quote:
+        options += [f'{s}: "{quote}"', f'"{quote}" - {s}']
+    fresh = [o for o in options if o.lower() not in recent] or options
+    title = rnd.choice(fresh) + (f" | {topic}" if topic and len(fresh[0]) < 60 else "")
+    caps = ctx["fallback_captions"]
     return {
         "title": title[:95],
-        "hook": hook,
-        "description": f"{streamer}'s chat exploded at this moment{topic_part}! Hype score {score}x.\n"
-                       f"Watch {streamer} live on {platform.title()}.",
-        "hashtags": tags,
+        "hook": caps[0]["text"] if caps else "",
+        "description": (f'{s}{" in " + topic if topic else ""}: ' +
+                        (f'"{quote}". ' if quote else "") + "Chat went wild at this moment.\n"
+                        f"Watch {s} live on {ctx['platform'].title()}."),
+        "hashtags": _tags(s, ctx["platform"], topic),
+        "captions": caps,
+        "sounds": None,
         "source": "template",
     }
 
 
-def generate(settings, streamer, platform, topic, chat, transcript, score,
-             timeline="", duration=40.0, fallback_captions=None):
-    """Returns title, hook, description, hashtags and `captions` (timed top captions)."""
+def _clean_sounds(raw, ctx):
+    """AI sound picks -> [{time, sound, why}] or None if unusable."""
+    kinds, duration = ctx["sound_kinds"], ctx["duration"]
+    out = []
+    for item in raw if isinstance(raw, list) else []:
+        try:
+            t, kind = float(item.get("time")), str(item.get("sound", "")).strip().lower()
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if kind in kinds and kind != "whoosh" and 0.5 <= t <= duration - 0.5 \
+                and all(abs(t - o["time"]) >= 4 for o in out) and kind not in {o["sound"] for o in out}:
+            out.append({"time": round(t, 2), "sound": kind, "why": str(item.get("why", ""))[:80]})
+    return out[:ctx["max_sfx"]] or None
+
+
+def generate(settings, ctx):
+    """ctx: streamer, platform, topic, chat, timeline, duration, fallback_captions, main_cat,
+    quote, recent_captions, recent_titles, sound_kinds {kind: label}, max_sfx, seed."""
     from .story import clean_captions
-    fb = _fallback(streamer, platform, topic, chat, transcript, score)
-    fb["captions"] = fallback_captions or [{"time": 0.0, "text": fb["hook"]}]
-    prompt = f"""You edit viral YouTube Shorts and Instagram Reels made from live stream clips.
-Streamer: {streamer} ({platform})
-Game/topic: {topic or "unknown"}
-Timeline of the {duration:.0f} second clip (seconds from clip start):
-{timeline[:2500]}
-Live chat at the peak: {json.dumps(chat[-30:], ensure_ascii=False)[:1200]}
+    fb = _fallback(ctx)
+    sounds_list = "\n".join(f"- {k}: {v}" for k, v in ctx["sound_kinds"].items() if k != "whoosh")
+    avoid = sorted(set(GENERIC + [c.lower() for c in ctx.get("recent_captions", [])]))[:40]
+    prompt = f"""You are a top YouTube Shorts editor. You turn live stream moments into viral clips.
+
+Streamer: {ctx['streamer']} ({ctx['platform']})
+Game/topic: {ctx['topic'] or "unknown"}
+Clip length: {ctx['duration']:.0f} seconds.
+
+TIMELINE (seconds from clip start). "on screen" = what a vision model saw in the video,
+"streamer says" = speech, "chat reacts" = live chat reaction, "loud" = loud audio:
+{ctx['timeline'][:3500]}
+
+Chat messages at the peak: {"; ".join(ctx['chat'][-25:])[:900]}
+
+Write captions that tell THE STORY OF THIS CLIP using the specific things in the timeline:
+what he does, what happens to him, what he says, how chat reacts. Name concrete things
+(the cops, the car, the jump, his exact words). Use his funniest/most dramatic words as a
+quote caption when he says something good. Captions are uppercase-friendly, 2 to 6 words,
+punchy, no emojis, no hashtags.
+
+Good examples (for other clips): "HE THOUGHT HE WAS SAFE", "COPS PULLED UP INSTANTLY",
+"\\"BRO I'M DONE\\"", "THE CAR JUST FLIPPED", "CHAT SAW IT COMING", "HE PANICKED".
+NEVER use these generic lines: {", ".join(avoid)}.
+
+Sound effects available (pick only from this list, use the name before the colon):
+{sounds_list}
 
 Return JSON with keys:
-"title": catchy Shorts title under 70 characters, includes the streamer name, no clickbait lies,
-"captions": list of 4 to 7 on-screen story captions, each {{"time": seconds, "text": "2 to 6 words"}}.
-  First one at time 0 sets up the moment and makes people keep watching ("He had no idea...").
-  The others appear at the right moments in the timeline and describe what is happening or how chat reacts.
-  At least 3 seconds apart. No emojis. Base them on the timeline, don't invent events,
-"description": 1-2 sentence description,
-"hashtags": list of 5-8 hashtags with # (include #shorts, the streamer and the game).
+"title": Shorts title under 70 characters, specific to this clip, includes {ctx['streamer']},
+"captions": 4 to 7 items {{"time": seconds, "text": "..."}}. First at 0 sets up the story and makes
+  people keep watching. Others land exactly when things happen in the timeline. 3+ seconds apart,
+"sounds": up to {ctx['max_sfx']} items {{"time": seconds, "sound": "name", "why": "short reason"}} placed
+  exactly on the action that fits (a fail, a crash, a shock, a funny line), each sound name used once,
+"description": 1-2 sentences about what happens,
+"hashtags": 5-8 hashtags with # (include #shorts, the streamer and the game).
 Only JSON."""
     try:
-        r = httpx.post(f"{settings['ollama_url'].rstrip('/')}/api/generate", timeout=120, json={
-            "model": settings["ollama_model"], "prompt": prompt, "format": "json",
-            "stream": False, "options": {"temperature": 0.8}, "keep_alive": "10m"})
-        r.raise_for_status()
-        data = json.loads(r.json()["response"])
+        data = llm.generate_json(settings, prompt, timeout=180)
         tags = data.get("hashtags") or []
         if isinstance(tags, str):
             tags = tags.split()
-        tags = [t if t.startswith("#") else "#" + t for t in map(str, tags)][:10]
-        caps = clean_captions(data.get("captions"), duration, fb["captions"])
-        out = {
-            "title": str(data.get("title", "")).strip()[:100],
-            "hook": caps[0]["text"] if caps else "",
-            "description": str(data.get("description", "")).strip(),
-            "hashtags": tags,
-            "captions": caps,
-            "source": "ollama" if caps is not fb["captions"] else "ollama (template captions)",
-        }
-        if out["title"]:
-            return {k: v or fb[k] for k, v in out.items()}
+        tags = [t if t.startswith("#") else "#" + t for t in map(str, tags) if t.strip("#")][:10]
+        caps = clean_captions(data.get("captions"), ctx["duration"], fb["captions"])
+        # drop generic lines the model used anyway; fall back if too few remain
+        if caps is not fb["captions"]:
+            kept = [c for c in caps if c["text"].lower().strip(" .!?") not in GENERIC]
+            caps = kept if len(kept) >= 3 else fb["captions"]
+        title = str(data.get("title", "")).strip().strip('"')[:100]
+        if title:
+            info = llm.resolve(settings)
+            return {
+                "title": title,
+                "hook": caps[0]["text"] if caps else fb["hook"],
+                "description": str(data.get("description", "")).strip() or fb["description"],
+                "hashtags": tags or fb["hashtags"],
+                "captions": caps,
+                "sounds": _clean_sounds(data.get("sounds"), ctx),
+                "source": f"AI ({info['model']}{', saw the video' if ctx.get('saw_video') else ''})"
+                          + ("" if caps is not fb["captions"] else ", template captions"),
+            }
         reason = "it returned no title"
     except Exception as e:  # noqa: BLE001
-        reason = f"{type(e).__name__}: {str(e)[:120]}"
-    log.warning("Ollama not used (%s); using template titles", reason)
-    fb["source"] = f"template (Ollama: {reason})"
+        reason = str(e)[:150]
+    log.warning("AI not used (%s); using template titles", reason)
+    fb["source"] = f"template (AI: {reason})"
     return fb

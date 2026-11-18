@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from . import captions, sfx, story, titles, tools
+from . import captions, scenes, sfx, story, titles, tools
 from .config import CLIPS
 from .recorder import SEG_SECONDS
 
@@ -62,6 +62,19 @@ def _has_audio(media: Path) -> bool:
     p = subprocess.run([tools.ffmpeg(), "-hide_banner", "-i", str(media)], capture_output=True, text=True,
                        errors="replace", creationflags=tools.NO_WINDOW)
     return "Audio:" in p.stderr
+
+
+def _recent_history(n=12):
+    """What the last clips used, so new clips don't repeat the same captions and sounds."""
+    out = {"captions": [], "titles": [], "sound_kinds": [], "sound_files": []}
+    for meta in reversed(list_clips()[:n]):  # oldest first
+        out["captions"] += [c.get("text", "") for c in meta.get("captions") or []]
+        out["titles"].append(meta.get("title", ""))
+        for snd in meta.get("sfx") or []:
+            if snd.get("sound") != "whoosh":
+                out["sound_kinds"].append(snd.get("sound"))
+            out["sound_files"].append(snd.get("file"))
+    return out
 
 
 def _tag_moods(caps, moments, main_cat):
@@ -126,19 +139,39 @@ def _process(job_id, streamer, moment, settings, manual):
             in_clip_chat = [m for m in chat_log if m["t"] >= 0]
             moments = story.build_moments(in_clip_chat, words, peaks, duration)
             main_cat = story.main_category(moments)
-            fallback_caps = story.fallback_captions(moments, duration, main_cat, seed=job_id)
+            topic = streamer.topic or settings["default_topic"]
+            recent = _recent_history()
 
+            scenes_found = []
+            if settings["vision"]:
+                _set(job_id, state="watching the clip (AI vision)")
+                frames = scenes.extract_frames(wide, scenes.key_times(moments, duration), out_dir)
+                scenes_found = scenes.describe(settings, frames, topic, streamer.channel_name)
+                for _, f in frames:
+                    f.unlink(missing_ok=True)
+
+            fallback_caps = story.fallback_captions(moments, duration, main_cat, seed=job_id, words=words,
+                                                    avoid=recent["captions"], topic=topic)
+            available_sounds = sfx.available() if settings["sfx_enabled"] else {}
             _set(job_id, state="writing title + captions")
-            meta_text = titles.generate(settings, streamer.channel_name, streamer.platform,
-                                        streamer.topic or settings["default_topic"], chat, transcript,
-                                        moment.get("score", 0), story.timeline_text(moments, words, duration),
-                                        duration, fallback_caps)
+            meta_text = titles.generate(settings, {
+                "streamer": streamer.channel_name, "platform": streamer.platform, "topic": topic,
+                "chat": chat, "duration": duration, "main_cat": main_cat, "seed": job_id,
+                "timeline": story.timeline_text(moments, words, duration, scenes_found),
+                "fallback_captions": fallback_caps, "quote": story.best_quote(words, moments),
+                "recent_captions": recent["captions"], "recent_titles": recent["titles"],
+                "sound_kinds": {k: sfx.KINDS[k] for k in available_sounds},
+                "max_sfx": settings["max_sfx"], "saw_video": bool(scenes_found),
+            })
+            ai_sounds = meta_text.pop("sounds", None)
 
             _tag_moods(meta_text["captions"], moments, main_cat)
             sounds = []
             if settings["sfx_enabled"]:
-                sounds = story.pick_sfx(moments, duration, sfx.available(), settings["max_sfx"],
-                                        settings["sfx_intro_whoosh"], seed=job_id)
+                sounds = story.pick_sfx(moments, duration, available_sounds, settings["max_sfx"],
+                                        settings["sfx_intro_whoosh"], seed=job_id,
+                                        recent_kinds=recent["sound_kinds"], recent_files=recent["sound_files"],
+                                        ai_picks=ai_sounds)
 
             _set(job_id, state="rendering 9:16")
             layout = settings["layout"]
@@ -186,8 +219,9 @@ def _process(job_id, streamer, moment, settings, manual):
             "chat": chat[-25:],
             "show_chat": show_chat,
             "moments": [{k: m[k] for k in ("t", "cat", "src")} for m in moments],
-            "sfx": [{"time": s["time"], "sound": s["sound"], "for": s["cat"],
+            "sfx": [{"time": s["time"], "sound": s["sound"], "for": s.get("why") or s["cat"],
                      "file": Path(s["file"]).name} for s in sounds],
+            "scenes": scenes_found,
             **meta_text,
             "files": {"vertical": f"/clips/{job_id}/clip_9x16.mp4", "wide": f"/clips/{job_id}/clip_16x9.mp4",
                       "thumb": f"/clips/{job_id}/thumb.jpg"},
