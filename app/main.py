@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import VERSION, chat, clipper, sfx, tools
+from . import VERSION, clipper, sfx, tools
 from .config import CLIPS, STATIC, Settings
 from .manager import Manager
 
@@ -23,12 +23,6 @@ log = logging.getLogger("app")
 settings = Settings()
 manager = Manager(settings)
 
-
-def _apply_settings():
-    chat.KICK_PUSHER.update(key=settings["kick_pusher_key"], cluster=settings["kick_pusher_cluster"])
-
-
-_apply_settings()
 
 
 @asynccontextmanager
@@ -128,7 +122,6 @@ def get_settings():
 @app.post("/api/settings")
 def save_settings(values: dict):
     settings.update(values)
-    _apply_settings()
     return settings.public()
 
 
