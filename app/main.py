@@ -1,15 +1,18 @@
 """Web dashboard + API. Start with:  python run.py"""
 import asyncio
 import logging
+import os
+import subprocess
+import sys
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import chat, clipper, tools
+from . import chat, clipper, sfx, tools
 from .config import CLIPS, STATIC, Settings
 from .manager import Manager
 
@@ -34,7 +37,9 @@ async def lifespan(_app):
         tools.ffmpeg()
     except RuntimeError as e:
         log.error(str(e))
-    asyncio.get_running_loop().run_in_executor(None, tools.video_encoder)  # warm up the check
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(None, tools.video_encoder)  # warm up the check
+    loop.run_in_executor(None, sfx.ensure_library)   # built-in sound effects + sfx folders
     await manager.start()
     yield
     await manager.shutdown()
@@ -42,17 +47,21 @@ async def lifespan(_app):
 
 app = FastAPI(title="HypeClipper", lifespan=lifespan)
 app.mount("/clips", StaticFiles(directory=CLIPS), name="clips")
+sfx.SFX_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/sfx", StaticFiles(directory=sfx.SFX_DIR), name="sfx")
 
 
 class AddStreamer(BaseModel):
     channel: str
     platform: str | None = None
     topic: str = ""
+    show_chat: bool = False
 
 
 class UpdateStreamer(BaseModel):
     topic: str | None = None
     auto_clip: bool | None = None
+    show_chat: bool | None = None
 
 
 @app.get("/")
@@ -68,7 +77,7 @@ def status():
 @app.post("/api/streamers")
 async def add_streamer(body: AddStreamer):
     try:
-        w = await manager.add(body.channel, body.platform or None, body.topic)
+        w = await manager.add(body.channel, body.platform or None, body.topic, show_chat=body.show_chat)
     except ValueError as e:
         raise HTTPException(400, str(e))
     return w.info()
@@ -78,7 +87,7 @@ async def add_streamer(body: AddStreamer):
 def update_streamer(key: str, body: UpdateStreamer):
     if key not in manager.workers:
         raise HTTPException(404, "not found")
-    manager.update(key, body.topic, body.auto_clip)
+    manager.update(key, body.topic, body.auto_clip, body.show_chat)
     return manager.workers[key].info()
 
 
@@ -125,7 +134,8 @@ def save_settings(values: dict):
 
 @app.get("/api/health")
 async def health():
-    out = {"ffmpeg": None, "encoder": None, "ollama": False, "ollama_models": []}
+    out = {"ffmpeg": None, "encoder": None, "ollama": False, "ollama_models": [],
+           "sfx": {k: len(v["files"]) for k, v in sfx.available().items()}}
     try:
         out["ffmpeg"] = tools.ffmpeg()
         out["encoder"] = (await asyncio.to_thread(tools.video_encoder))[1]
@@ -139,3 +149,59 @@ async def health():
     except Exception:  # noqa: BLE001
         pass
     return out
+
+
+@app.post("/api/sfx/open")
+def open_sfx_folder():
+    """Opens the sound effects folder in Explorer so you can drop your own sounds in."""
+    sfx.ensure_library()
+    path = str(sfx.SFX_DIR.resolve())
+    try:
+        if os.name == "nt":
+            os.startfile(path)  # noqa: S606 - local app, fixed path
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+    except OSError:
+        pass
+    return {"path": path}
+
+
+class SoundUrl(BaseModel):
+    url: str
+
+
+@app.get("/api/sfx")
+def sound_library():
+    return sfx.library()
+
+
+@app.post("/api/sfx/{kind}/upload")
+async def upload_sound(kind: str, request: Request, name: str = "sound.mp3"):
+    data = await request.body()
+    try:
+        saved = await asyncio.to_thread(sfx.save_upload, kind, name, data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"saved": saved}
+
+
+@app.post("/api/sfx/{kind}/url")
+async def sound_from_url(kind: str, body: SoundUrl):
+    try:
+        saved = await asyncio.to_thread(sfx.import_url, kind, body.url.strip())
+    except (ValueError, httpx.HTTPError, OSError) as e:
+        raise HTTPException(400, f"could not get that sound: {e}")
+    return {"saved": saved}
+
+
+@app.delete("/api/sfx/{kind}/{name}")
+def delete_sound(kind: str, name: str):
+    try:
+        ok = sfx.delete(kind, name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not ok:
+        raise HTTPException(404, "not found (built-in sounds can't be deleted)")
+    return {"ok": True}

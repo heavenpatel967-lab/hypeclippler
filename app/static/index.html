@@ -49,6 +49,13 @@
   .empty { color:var(--dim); padding:20px; border:1px dashed var(--line); border-radius:12px; text-align:center; }
   .settings { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:12px; }
   .settings label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--dim); }
+  .sound .chips { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
+  .chip { display:flex; align-items:center; gap:4px; background:#22252e; border-radius:99px; padding:3px 4px 3px 10px; font-size:12px; }
+  .chip button { padding:1px 7px; border-radius:99px; font-size:11px; }
+  .chip.builtin { color:var(--dim); font-style:italic; }
+  .sound .add { display:flex; gap:6px; } .sound .add input[type=text] { flex:1; min-width:0; padding:6px 8px; font-size:12px; }
+  .sound .add button, .sound label.up { padding:6px 10px; font-size:12px; }
+  label.up { border:1px solid var(--line); border-radius:8px; cursor:pointer; white-space:nowrap; }
   .toast { position:fixed; bottom:20px; right:20px; background:#222632; border:1px solid var(--line); padding:10px 16px; border-radius:8px; display:none; max-width:420px; }
 </style>
 </head>
@@ -65,6 +72,7 @@
     </select>
     <input id="channel" placeholder="channel name or URL (e.g. xqc, kick.com/adinross, @handle)" size="44" required>
     <input id="topic" placeholder="game/topic (optional, e.g. GTA 6)">
+    <label class="toggle" title="Draw the live chat under the video. Use it for streams that don't show chat on screen."><input type="checkbox" id="showChat"> show chat in clips</label>
     <button class="primary">+ Watch streamer</button>
   </form>
 
@@ -77,10 +85,15 @@
   <h2>Clips</h2>
   <div class="clips" id="clips"></div>
 
+  <h2>Sound effects</h2>
+  <div class="small" style="margin-bottom:10px">Each folder is a type of sound. The app picks sounds that fit the moment (fails get FAHHH, emotional damage, sad violin; shocks get vine boom, taco bell, metal pipe; laughs get laugh sounds...). Add sounds by uploading a file or pasting a link: a direct .mp3 link or a sound page like myinstants.com. Your sounds replace the built-in one in that folder.</div>
+  <div class="grid" id="sounds"></div>
+
   <h2>Settings</h2>
   <form id="settingsForm">
     <div class="settings" id="settings"></div>
-    <div style="margin-top:12px"><button class="primary">Save settings</button></div>
+    <div style="margin-top:12px" class="row"><button class="primary">Save settings</button>
+      <button type="button" id="openSfx">Open sound effects folder</button><span class="small" id="sfxInfo"></span></div>
   </form>
 </main>
 <div class="toast" id="toast"></div>
@@ -99,7 +112,7 @@ async function api(path, opts = {}) {
 $("#addForm").onsubmit = async e => {
   e.preventDefault();
   try {
-    await api("/api/streamers", { method: "POST", body: JSON.stringify({ channel: $("#channel").value, platform: $("#platform").value, topic: $("#topic").value }) });
+    await api("/api/streamers", { method: "POST", body: JSON.stringify({ channel: $("#channel").value, platform: $("#platform").value, topic: $("#topic").value, show_chat: $("#showChat").checked }) });
     $("#channel").value = ""; refresh();
   } catch (err) { toast(err.message); }
 };
@@ -120,6 +133,7 @@ function cardFor(s) {
         <button class="clipnow">✂ Clip now</button>
         <input class="topicIn" placeholder="topic">
         <label class="toggle"><input type="checkbox" class="auto"> auto</label>
+        <label class="toggle" title="Show live chat under the video in clips"><input type="checkbox" class="chatIn"> chat</label>
         <button class="danger remove" title="Stop watching">✕</button>
       </div>`;
     el.querySelector(".name").textContent = s.name;
@@ -127,6 +141,7 @@ function cardFor(s) {
     el.querySelector(".clipnow").onclick = async () => { try { await api(`/api/streamers/${s.key}/clip`, {method:"POST"}); toast("Clipping the last 30s + next 10s..."); refresh(); } catch (e) { toast(e.message); } };
     el.querySelector(".remove").onclick = async () => { if (confirm(`Stop watching ${s.name}?`)) { await api(`/api/streamers/${s.key}`, {method:"DELETE"}); el.remove(); delete cards[s.key]; } };
     el.querySelector(".auto").onchange = e => api(`/api/streamers/${s.key}`, {method:"PATCH", body: JSON.stringify({auto_clip: e.target.checked})});
+    el.querySelector(".chatIn").onchange = e => api(`/api/streamers/${s.key}`, {method:"PATCH", body: JSON.stringify({show_chat: e.target.checked})});
     el.querySelector(".topicIn").onchange = e => api(`/api/streamers/${s.key}`, {method:"PATCH", body: JSON.stringify({topic: e.target.value})});
     $("#streamers").appendChild(el);
     cards[s.key] = el;
@@ -162,6 +177,7 @@ async function refresh() {
       `${s.rate}/s now · ${s.baseline}/s normal · ${s.hype_level}x` + (s.in_hype ? " · HYPE!" : "");
     el.querySelector(".made").textContent = `${s.clips_made} clips`;
     el.querySelector(".auto").checked = s.auto_clip;
+    el.querySelector(".chatIn").checked = s.show_chat;
     drawGraph(el.querySelector("canvas"), s.graph, s.baseline, sensitivity);
   }
   $("#jobs").innerHTML = st.jobs.length ? st.jobs.map(j => `<div class="job ${j.state === "failed" ? "failed" : ""}"><b>${esc(j.streamer)}</b><span class="state">${esc(j.state)}</span><span class="small">score ${esc(j.score)}</span><span class="small">${esc(j.error || "")}</span></div>`).join("")
@@ -188,7 +204,11 @@ async function loadClips() {
         <a href="${esc(c.files.wide)}" download="${esc(c.streamer + "_" + c.id)}_16x9.mp4"><button>⬇ 16:9</button></a>
         <button class="danger del">Delete</button>
       </div>
-      <details><summary>Transcript & chat</summary><p>${esc(c.transcript || "(no speech)")}</p><p>${esc((c.chat || []).join(" | "))}</p></details>
+      <details><summary>Captions, sounds, transcript & chat</summary>
+        <p><b>Top captions:</b> ${esc((c.captions || []).map(x => `${x.time}s ${x.text}`).join(" · ") || c.hook)}</p>
+        <p><b>Sound effects:</b> ${esc((c.sfx || []).map(x => `${x.time}s ${x.sound} (${x.for})`).join(" · ") || "none")}</p>
+        <p><b>Speech:</b> ${esc(c.transcript || "(no speech detected, so no word captions)")}</p>
+        <p><b>Chat:</b> ${esc((c.chat || []).join(" | "))}</p></details>
     </div>`).join("") : `<div class="empty">No clips yet. They appear here automatically when chat explodes.</div>`;
   for (const el of document.querySelectorAll(".clip")) {
     const c = clips.find(x => x.id === el.dataset.id);
@@ -201,8 +221,10 @@ const SETTINGS = [
   ["pre_seconds", "Seconds before peak"], ["post_seconds", "Seconds after peak"],
   ["sensitivity", "Sensitivity (x normal chat speed, lower = more clips)"], ["min_msgs_per_sec", "Min chat speed (msgs/s) to count"],
   ["cooldown_seconds", "Cooldown between clips (s)"], ["warmup_seconds", "Warm-up (s)"], ["buffer_seconds", "Video buffer (s)"],
-  ["quality", "Recording quality"], ["layout", "Layout", ["blur", "crop"]], ["burn_hook", "Burn hook text on video", ["true", "false"]],
-  ["caption_font", "Caption font"], ["default_topic", "Default game/topic"],
+  ["quality", "Recording quality"], ["layout", "Layout", ["blur", "crop"]], ["burn_hook", "Top story captions", ["true", "false"]],
+  ["sfx_enabled", "Sound effects", ["true", "false"]], ["max_sfx", "Max sound effects per clip"], ["sfx_volume", "Sound effect volume (0.1-1.5)"],
+  ["sfx_intro_whoosh", "Whoosh at clip start", ["true", "false"]],
+  ["caption_position", "Word captions position", ["above", "on_video", "below"]], ["caption_font", "Caption font"], ["default_topic", "Default game/topic"],
   ["whisper_model", "Whisper model", ["large-v3-turbo", "medium", "small", "base"]], ["whisper_device", "Whisper device", ["auto", "cuda", "cpu"]],
   ["ollama_model", "Ollama model"], ["ollama_url", "Ollama URL"],
   ["kick_pusher_key", "Kick chat key (change only if Kick breaks)"], ["kick_pusher_cluster", "Kick chat cluster"],
@@ -214,6 +236,7 @@ async function loadSettings() {
     ? `<select name="${k}">${opts.map(o => `<option ${String(s[k]) === o ? "selected" : ""}>${o}</option>`).join("")}</select>`
     : `<input name="${k}" value="${esc(s[k])}">`}</label>`).join("");
 }
+$("#openSfx").onclick = async () => { try { const r = await api("/api/sfx/open", {method:"POST"}); toast("Folder: " + r.path); } catch (e) { toast(e.message); } };
 $("#settingsForm").onsubmit = async e => {
   e.preventDefault();
   const body = Object.fromEntries(new FormData(e.target).entries());
@@ -226,11 +249,52 @@ async function loadHealth() {
   $("#health").innerHTML = [
     h.ffmpeg ? `<span class="badge ok">ffmpeg ✓</span>` : `<span class="badge bad">ffmpeg missing</span>`,
     h.encoder ? `<span class="badge ${h.encoder.includes("nvenc") ? "ok" : ""}">encoder: ${esc(h.encoder)}</span>` : "",
+    `<span class="badge" title="${esc(Object.entries(h.sfx || {}).map(([k, v]) => `${k}: ${v}`).join(", "))}">sounds: ${Object.keys(h.sfx || {}).length} kinds</span>`,
     h.ollama ? `<span class="badge ok">Ollama ✓ ${esc(h.ollama_models.slice(0, 2).join(", "))}</span>` : `<span class="badge" title="Install Ollama for AI titles. Template titles are used until then.">Ollama off (template titles)</span>`,
   ].join("");
 }
 
-loadSettings(); loadHealth(); refresh(); loadClips();
+const player = new Audio();
+async function loadSounds() {
+  const lib = await api("/api/sfx");
+  $("#sounds").innerHTML = lib.map(f => `
+    <div class="card sound" data-kind="${esc(f.kind)}">
+      <div class="row"><b>${esc(f.label)}</b><span class="small" style="margin-left:auto">${esc(f.kind)}/</span></div>
+      <div class="chips">${f.files.length ? f.files.map(x => `
+        <span class="chip ${x.builtin ? "builtin" : ""}">${x.builtin ? "built-in" : esc(x.name)}
+          <button data-play="${esc(x.url)}">▶</button>${x.builtin ? "" : `<button class="danger" data-del="${esc(x.name)}">✕</button>`}</span>`).join("")
+        : `<span class="small">empty, add a sound</span>`}</div>
+      <div class="add">
+        <input type="text" placeholder="paste link (myinstants page or .mp3)">
+        <button class="addUrl">Add</button>
+        <label class="up">Upload<input type="file" accept="audio/*" hidden></label>
+      </div>
+    </div>`).join("");
+  for (const card of document.querySelectorAll(".sound")) {
+    const kind = card.dataset.kind;
+    card.querySelectorAll("[data-play]").forEach(b => b.onclick = () => { player.src = b.dataset.play; player.play(); });
+    card.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => {
+      if (confirm(`Delete ${b.dataset.del}?`)) { await api(`/api/sfx/${kind}/${encodeURIComponent(b.dataset.del)}`, {method:"DELETE"}); loadSounds(); }
+    });
+    card.querySelector(".addUrl").onclick = async () => {
+      const input = card.querySelector("input[type=text]");
+      if (!input.value.trim()) return;
+      toast("Downloading sound...");
+      try { const r = await api(`/api/sfx/${kind}/url`, {method:"POST", body: JSON.stringify({url: input.value})}); toast("Added " + r.saved); loadSounds(); }
+      catch (e) { toast(e.message); }
+    };
+    card.querySelector("input[type=file]").onchange = async e => {
+      const file = e.target.files[0]; if (!file) return;
+      try {
+        const r = await fetch(`/api/sfx/${kind}/upload?name=${encodeURIComponent(file.name)}`, {method:"POST", body: file, headers: {"Content-Type": "application/octet-stream"}});
+        const data = await r.json(); if (!r.ok) throw new Error(data.detail || r.statusText);
+        toast("Added " + data.saved); loadSounds();
+      } catch (err) { toast(err.message); }
+    };
+  }
+}
+
+loadSettings(); loadHealth(); refresh(); loadClips(); loadSounds();
 setInterval(refresh, 1500);
 setInterval(loadHealth, 30000);
 </script>

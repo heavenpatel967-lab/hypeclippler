@@ -53,21 +53,30 @@ def _fallback(streamer, platform, topic, chat, transcript, score):
     }
 
 
-def generate(settings, streamer, platform, topic, chat, transcript, score):
-    prompt = f"""You write titles for viral YouTube Shorts and Instagram Reels made from live stream clips.
+def generate(settings, streamer, platform, topic, chat, transcript, score,
+             timeline="", duration=40.0, fallback_captions=None):
+    """Returns title, hook, description, hashtags and `captions` (timed top captions)."""
+    from .story import clean_captions
+    fb = _fallback(streamer, platform, topic, chat, transcript, score)
+    fb["captions"] = fallback_captions or [{"time": 0.0, "text": fb["hook"]}]
+    prompt = f"""You edit viral YouTube Shorts and Instagram Reels made from live stream clips.
 Streamer: {streamer} ({platform})
 Game/topic: {topic or "unknown"}
-What the streamer said in the clip: "{transcript[:1200]}"
-Live chat messages at the peak moment: {json.dumps(chat[-40:], ensure_ascii=False)[:1500]}
+Timeline of the {duration:.0f} second clip (seconds from clip start):
+{timeline[:2500]}
+Live chat at the peak: {json.dumps(chat[-30:], ensure_ascii=False)[:1200]}
 
 Return JSON with keys:
 "title": catchy Shorts title under 70 characters, includes the streamer name, no clickbait lies,
-"hook": 2 to 6 word on-screen hook text that makes people keep watching, no emojis,
+"captions": list of 4 to 7 on-screen story captions, each {{"time": seconds, "text": "2 to 6 words"}}.
+  First one at time 0 sets up the moment and makes people keep watching ("He had no idea...").
+  The others appear at the right moments in the timeline and describe what is happening or how chat reacts.
+  At least 3 seconds apart. No emojis. Base them on the timeline, don't invent events,
 "description": 1-2 sentence description,
-"hashtags": list of 5-8 hashtags with # (include #shorts and the streamer and game).
+"hashtags": list of 5-8 hashtags with # (include #shorts, the streamer and the game).
 Only JSON."""
     try:
-        r = httpx.post(f"{settings['ollama_url'].rstrip('/')}/api/generate", timeout=90, json={
+        r = httpx.post(f"{settings['ollama_url'].rstrip('/')}/api/generate", timeout=120, json={
             "model": settings["ollama_model"], "prompt": prompt, "format": "json",
             "stream": False, "options": {"temperature": 0.8}, "keep_alive": "10m"})
         r.raise_for_status()
@@ -76,16 +85,17 @@ Only JSON."""
         if isinstance(tags, str):
             tags = tags.split()
         tags = [t if t.startswith("#") else "#" + t for t in map(str, tags)][:10]
+        caps = clean_captions(data.get("captions"), duration, fb["captions"])
         out = {
             "title": str(data.get("title", "")).strip()[:100],
-            "hook": str(data.get("hook", "")).strip()[:60],
+            "hook": caps[0]["text"] if caps else "",
             "description": str(data.get("description", "")).strip(),
             "hashtags": tags,
-            "source": "ollama",
+            "captions": caps,
+            "source": "ollama" if caps is not fb["captions"] else "ollama (template captions)",
         }
         if out["title"]:
-            fb = _fallback(streamer, platform, topic, chat, transcript, score)
             return {k: v or fb[k] for k, v in out.items()}
     except Exception as e:  # noqa: BLE001
         log.info("Ollama not available (%s); using template titles", type(e).__name__)
-    return _fallback(streamer, platform, topic, chat, transcript, score)
+    return fb

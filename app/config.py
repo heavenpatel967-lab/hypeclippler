@@ -26,7 +26,13 @@ DEFAULTS = {
     "quality": "720p60,720p,720p30,best",
     # output
     "layout": "blur",            # blur = 16:9 video on blurred 9:16 background, crop = fill screen
-    "burn_hook": True,           # burn the short hook text at the top of the clip
+    "caption_position": "above",  # word captions: above | on_video | below the video
+    "burn_hook": True,           # burn the timed story captions at the top of the clip
+    # sound effects (sfx/<kind>/ folders)
+    "sfx_enabled": True,
+    "sfx_volume": 0.8,
+    "max_sfx": 3,                # per clip, not counting the intro whoosh
+    "sfx_intro_whoosh": True,
     "caption_font": "Arial Black",
     "default_topic": "GTA 6",
     # captions (local, free)
