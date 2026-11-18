@@ -64,6 +64,13 @@ def _has_audio(media: Path) -> bool:
     return "Audio:" in p.stderr
 
 
+def _tag_moods(caps, moments, main_cat):
+    """Gives each top caption the mood of the nearest moment (used for its colour)."""
+    for i, c in enumerate(caps):
+        near = [m for m in moments if -1.5 <= m["t"] - c["time"] <= 3.5]
+        c["cat"] = near[0]["cat"] if near else ("setup" if i == 0 else main_cat)
+
+
 def _render_filter(layout, video_y):
     if layout == "crop":
         return "[0:v]scale=-2:1920,crop=1080:1920,ass=captions.ass,format=yuv420p[v]"
@@ -127,6 +134,7 @@ def _process(job_id, streamer, moment, settings, manual):
                                         moment.get("score", 0), story.timeline_text(moments, words, duration),
                                         duration, fallback_caps)
 
+            _tag_moods(meta_text["captions"], moments, main_cat)
             sounds = []
             if settings["sfx_enabled"]:
                 sounds = story.pick_sfx(moments, duration, sfx.available(), settings["max_sfx"],
@@ -137,7 +145,8 @@ def _process(job_id, streamer, moment, settings, manual):
             geo = captions.geometry(layout, show_chat, settings["caption_position"])
             (out_dir / "captions.ass").write_text(
                 captions.build_ass(words, duration, meta_text["captions"], layout, settings["caption_font"],
-                                   settings["burn_hook"], chat_log, show_chat, settings["caption_position"]),
+                                   settings["burn_hook"], chat_log, show_chat, settings["caption_position"],
+                                   settings["top_caption_style"], settings["word_color"]),
                 encoding="utf-8")
             vf = _render_filter(layout, geo["video_y"])
             has_audio = bool(peaks) or _has_audio(wide)

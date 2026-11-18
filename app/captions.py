@@ -2,6 +2,7 @@
 import importlib.util
 import logging
 import os
+import re
 import threading
 from pathlib import Path
 
@@ -178,9 +179,68 @@ def _chat_events(chat, duration, box, max_lines=10, per_sec=3.5):
     return out
 
 
+
+# --------------------------------------------------------------- caption looks
+# ASS colours are &HBBGGRR&
+MOOD_COLORS = {
+    "setup": "&H00E1FF&",     # yellow
+    "laugh": "&H00E1FF&",     # yellow
+    "hype": "&H3CF03C&",      # green
+    "shock": "&H1E8CFF&",     # orange
+    "fail": "&H3C3CFF&",      # red
+    "suspense": "&HFF5AB4&",  # purple
+    "bruh": "&HFFDC32&",      # cyan
+    "loud": "&H1E8CFF&",
+}
+WORD_COLORS = {"yellow": "&H00E6FF&", "green": "&H3CF03C&", "red": "&H3C3CFF&", "cyan": "&HFFDC32&",
+               "pink": "&HB45AFF&"}
+EMPHASIS = {"NO", "WAY", "WHAT", "WRONG", "CRAZY", "INSANE", "LOST", "CHAT", "LAUGHING", "WORSE", "IDEA",
+            "RUN", "L", "W", "BRUH", "NOBODY", "REGRET", "EXPECTED", "TROUBLE", "SCREAMING", "TOO", "FUNNY",
+            "GOOOO", "GOOO", "WATCH", "WAIT", "MASSIVE", "NOT", "NEVER"}
+
+
+def _emphasis_index(words):
+    """Which word of a top caption gets the colour: a hype keyword, else the longest word."""
+    best, best_score = 0, -1
+    for i, w in enumerate(words):
+        core = re.sub(r"[^A-Z0-9']", "", w.upper())
+        score = (100 if core in EMPHASIS else 0) + len(core)
+        if score > best_score:
+            best, best_score = i, score
+    return best
+
+
+def _top_caption_text(text, style, color, index):
+    words = _clean(text).upper().split()
+    if not words:
+        return ""
+    tilt = (-3, 2, -2, 3)[index % 4]
+    pop = (f"\\fad(60,80)\\frz{tilt}\\fscx40\\fscy40\\t(0,140,\\fscx116\\fscy116)"
+           "\\t(140,240,\\fscx100\\fscy100)")
+    if style == "classic":
+        return "{\\fad(0,60)\\fscx70\\fscy70\\t(0,120,\\fscx106\\fscy106)\\t(120,200,\\fscx100\\fscy100)}" + " ".join(words)
+    if style == "box":
+        # coloured box that changes with the mood of the moment, white text
+        light = color in (MOOD_COLORS["laugh"], MOOD_COLORS["hype"], MOOD_COLORS["bruh"])
+        text_c = "&H101010&" if light else "&HFFFFFF&"
+        return f"{{{pop}\\3c{color}\\c{text_c}}}" + " ".join(words)
+    # "pop": white text, thick black outline, one key word in the mood colour
+    k = _emphasis_index(words)
+    words[k] = f"{{\\c{color}}}{words[k]}{{\\c&HFFFFFF&}}"
+    return f"{{{pop}}}" + " ".join(words)
+
+
 def build_ass(words, duration: float, top_captions: list, layout: str, font: str, burn_top: bool,
-              chat=None, show_chat=False, caption_position="above") -> str:
+              chat=None, show_chat=False, caption_position="above", top_style="pop",
+              word_color="yellow") -> str:
     g = geometry(layout, show_chat, caption_position)
+    hl = WORD_COLORS.get(word_color, WORD_COLORS["yellow"])
+    if top_style == "box":
+        top = f"Style: Top,{font},70,&H00FFFFFF,&H00FFFFFF,&H003C3CFF,&H00000000,-1,0,0,0,100,100,0,0,3,20,0,5,70,70,0,1"
+    elif top_style == "classic":
+        top = f"Style: Top,{font},62,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,3,18,0,5,70,70,0,1"
+    else:
+        top = f"Style: Top,{font},84,&H00FFFFFF,&H00FFFFFF,&H00000000,&H78000000,-1,0,0,0,100,100,1,0,1,9,5,5,60,60,0,1"
     lines = [
         "[Script Info]", "ScriptType: v4.00+", "PlayResX: 1080", "PlayResY: 1920",
         "WrapStyle: 0", "ScaledBorderAndShadow: yes", "",
@@ -188,9 +248,9 @@ def build_ass(words, duration: float, top_captions: list, layout: str, font: str
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
         "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-        f"Style: Cap,{font},{84 if show_chat else 92},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,"
-        "-1,0,0,0,100,100,1,0,1,7,3,5,60,60,0,1",
-        f"Style: Top,{font},62,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,3,18,0,5,70,70,0,1",
+        f"Style: Cap,{font},{84 if show_chat else 90},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,"
+        "-1,0,0,0,100,100,1,0,1,8,4,5,60,60,0,1",
+        top,
         "Style: ChatBox,Arial,20,&H00000000,&H00000000,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1",
         "Style: ChatHead,Arial,34,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,1,0,1,0,0,7,0,0,0,1",
         "Style: Chat,Arial,38,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,1,66,66,0,1",
@@ -205,9 +265,10 @@ def build_ass(words, duration: float, top_captions: list, layout: str, font: str
             end = caps[i + 1]["time"] if i + 1 < len(caps) else duration
             if end - start < 0.3:
                 continue
-            pop = "\\fscx70\\fscy70\\t(0,120,\\fscx106\\fscy106)\\t(120,200,\\fscx100\\fscy100)"
-            lines.append(f"Dialogue: 4,{_ts(start)},{_ts(end)},Top,,0,0,0,,"
-                         f"{{\\pos(540,{g['top_y']}){pop}}}{_clean(c['text']).upper()}")
+            color = MOOD_COLORS.get(c.get("cat") or ("setup" if i == 0 else "hype"), MOOD_COLORS["hype"])
+            text = _top_caption_text(c["text"], top_style, color, i)
+            if text:
+                lines.append(f"Dialogue: 4,{_ts(start)},{_ts(end)},Top,,0,0,0,,{{\\pos(540,{g['top_y']})}}{text}")
 
     if show_chat and g["chat"] and chat is not None:
         lines += _chat_events(chat, duration, g["chat"])
@@ -223,8 +284,9 @@ def build_ass(words, duration: float, top_captions: list, layout: str, font: str
             parts = []
             for j, other in enumerate(chunk):
                 word = _clean(other["word"]).upper()
-                if j == wi:
-                    parts.append("{\\c&H00E6FF&\\fscx112\\fscy112}" + word + "{\\c&HFFFFFF&\\fscx100\\fscy100}")
+                if j == wi:  # active word: colour + quick bounce
+                    parts.append(f"{{\\c{hl}\\fscx100\\fscy100\\t(0,90,\\fscx122\\fscy122)\\t(90,170,\\fscx112\\fscy112)}}"
+                                 f"{word}{{\\c&HFFFFFF&\\fscx100\\fscy100}}")
                 else:
                     parts.append(word)
             lines.append(f"Dialogue: 5,{_ts(start)},{_ts(end)},Cap,,0,0,0,,"

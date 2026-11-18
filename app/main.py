@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import chat, clipper, sfx, tools
+from . import VERSION, chat, clipper, sfx, tools
 from .config import CLIPS, STATIC, Settings
 from .manager import Manager
 
@@ -134,7 +134,7 @@ def save_settings(values: dict):
 
 @app.get("/api/health")
 async def health():
-    out = {"ffmpeg": None, "encoder": None, "ollama": False, "ollama_models": [],
+    out = {"version": VERSION, "ffmpeg": None, "encoder": None, "ollama": False, "ollama_models": [],
            "sfx": {k: len(v["files"]) for k, v in sfx.available().items()}}
     try:
         out["ffmpeg"] = tools.ffmpeg()
