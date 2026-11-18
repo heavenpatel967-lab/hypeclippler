@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-from . import captions, llm, render, resources, scenes, sfx, story, titles, tools
+from . import captions, facecam, llm, render, resources, scenes, sfx, story, titles, tools
 from .config import CLIPS
 from .recorder import SEG_SECONDS
 
@@ -148,12 +148,16 @@ def _process(job_id, streamer, moment, settings, manual):
         chat_log = streamer.detector.chat_log(t0 - 15, t1)
         chat_log = [{**m, "t": round(m["t"] - 15, 2)} for m in chat_log]
         chat = streamer.detector.messages_between(moment["peak_ts"] - 15, moment["peak_ts"] + 10)
-        show_chat = bool(getattr(streamer, "show_chat", False))
+        show_chat = bool(getattr(streamer, "show_chat", False)) and settings["chat_box_enabled"]
 
         _set(job_id, state="cutting")
-        src = out_dir / "source.ts"
-        offset = streamer.recorder.export(t0, t1, src)
+        parts_list, offset, missing = streamer.recorder.export(t0, t1, out_dir)
+        if missing > 3:
+            log.warning("%s: %.0fs of video missing in this clip (internet/PC too slow)", streamer.channel_name, missing)
         duration = t1 - t0
+        out_fps = str(settings["output_fps"])
+        # constant frame rate + audio synced to it: no frozen video when the stream had gaps
+        smooth = ["-fps_mode", "cfr", "-r", out_fps, "-af", "aresample=async=1:first_pts=0"]
         ff = tools.ffmpeg()
         enc = tools.video_encoder()
 
@@ -166,10 +170,13 @@ def _process(job_id, streamer, moment, settings, manual):
                 log.warning("still only %d MB free after waiting, trying anyway", free)
             low = settings["low_memory"]
             full = out_dir / "full.mp4"
-            tools.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{offset:.2f}", "-i", str(src),
-                       "-t", f"{duration:.2f}", "-map", "0:v:0", "-map", "0:a:0?", *enc,
-                       "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(full)])
-            src.unlink(missing_ok=True)
+            tools.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-fflags", "+genpts+discardcorrupt",
+                       "-f", "concat", "-safe", "0", "-ss", f"{offset:.2f}", "-i", parts_list.name,
+                       "-t", f"{duration:.2f}", "-map", "0:v:0", "-map", "0:a:0?", *smooth, *enc,
+                       "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", full.name], cwd=out_dir)
+            for f in out_dir.glob("part_*.ts"):
+                f.unlink(missing_ok=True)
+            parts_list.unlink(missing_ok=True)
 
             _set(job_id, state="captioning")
             try:
@@ -238,8 +245,8 @@ def _process(job_id, streamer, moment, settings, manual):
             clip_len = end - start
             wide = out_dir / "clip_16x9.mp4"
             tools.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{start:.2f}", "-i", str(full),
-                       "-t", f"{clip_len:.2f}", "-map", "0:v:0", "-map", "0:a:0?", *enc,
-                       "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(wide)])
+                       "-t", f"{clip_len:.2f}", "-map", "0:v:0", "-map", "0:a:0?", "-fps_mode", "cfr",
+                       "-r", out_fps, *enc, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(wide)])
             full.unlink(missing_ok=True)
             words = _shift_words(words, start, clip_len)
             moments = story.shift(moments, start, clip_len)
@@ -262,14 +269,25 @@ def _process(job_id, streamer, moment, settings, manual):
             # ---- render 9:16
             _set(job_id, state="rendering 9:16")
             src_w, src_h, fps = render.probe(wide)
-            cam_box = getattr(streamer, "facecam", None)
+            cam_box, cam_source = getattr(streamer, "facecam", None), "manual"
             layout = settings["layout"]
+            if layout == "facecam" and not cam_box and settings["auto_facecam"]:
+                _set(job_id, state="finding the webcam")
+                cam_box, cam_source = facecam.detect(wide, clip_len, src_w, src_h), "auto"
+                if cam_box:
+                    streamer.auto_facecam = cam_box
+                else:  # webcam hidden in this clip (e.g. full-screen gameplay): use the last one found
+                    cam_box = getattr(streamer, "auto_facecam", None)
+                    cam_source = "auto (earlier clip)" if cam_box else "none"
+            if layout == "facecam" and not cam_box:
+                layout = settings["no_facecam_layout"]
             geo = render.geometry(layout, show_chat, settings["caption_position"], settings["video_zoom"],
                                   cam_box, (src_w, src_h))
             (out_dir / "captions.ass").write_text(
                 captions.build_ass(words if settings["word_captions"] else [], clip_len, meta_text["captions"], layout, settings["caption_font"],
                                    settings["burn_hook"], chat_log, show_chat, settings["caption_position"],
-                                   settings["top_caption_style"], settings["word_color"], geo=geo),
+                                   settings["top_caption_style"], settings["word_color"], geo=geo,
+                                   caption_mode=settings["caption_mode"], headline=meta_text.get("headline", "")),
                 encoding="utf-8")
             strongest = sorted(moments, key=lambda m: -m["strength"])[:3]
             punch = sorted(m["t"] for m in strongest if m["t"] > 0.8) if settings["zoom_punch"] else []
@@ -324,6 +342,8 @@ def _process(job_id, streamer, moment, settings, manual):
             "chat_stats": chat_metrics,
             "show_chat": show_chat,
             "layout": geo["kind"],
+            "facecam": cam_source if geo["kind"] == "facecam" else None,
+            "video_missing_s": missing,
             "zoom_punches": punch,
             "moments": [{k: m[k] for k in ("t", "cat", "src")} for m in moments],
             "sfx": [{"time": s["time"], "sound": s["sound"], "for": s.get("why") or s["cat"],

@@ -37,12 +37,17 @@ DEFAULTS = {
     # output
     "layout": "facecam",         # facecam = webcam on top + gameplay below (when a webcam box is set),
                                  # blur = 16:9 video on blurred background, crop = fill screen
+    "auto_facecam": True,        # find the webcam automatically when no box is drawn
+    "no_facecam_layout": "crop", # layout when no webcam is found: crop (fill screen) or blur
+    "caption_mode": "title",     # title = one headline for the whole clip, story = changing captions
+    "chat_box_enabled": False,   # master switch for the chat box under the video
+    "output_fps": 30,            # 30 = smoother on a busy PC and smaller files, 60 = smoother motion
     "video_zoom": 1.2,           # blur layout: crop the sides so the video is bigger (1.0-1.4)
     "zoom_punch": True,          # quick zoom-in on the key moments
     "caption_position": "above",  # word captions: above | on_video | below the video
     "burn_hook": True,
-    "word_captions": True,       # word-by-word captions of what the streamer says
-    "top_caption_style": "pop",   # pop | box | classic
+    "word_captions": False,       # word-by-word captions of what the streamer says
+    "top_caption_style": "tiktok",  # title mode: tiktok | impact; story mode: pop | box | classic
     "word_color": "yellow",       # yellow | green | red | cyan | pink           # burn the timed story captions at the top of the clip
     # sound effects (sfx/<kind>/ folders)
     "sfx_enabled": True,

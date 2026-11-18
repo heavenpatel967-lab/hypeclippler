@@ -163,9 +163,11 @@ class Recorder:
                 except OSError:
                     pass
 
-    def export(self, t0: float, t1: float, out: Path) -> float:
-        """Joins the chunks covering [t0, t1] into one .ts file.
-        Returns the offset (seconds) of t0 inside that file."""
+    def export(self, t0: float, t1: float, out_dir: Path):
+        """Copies the chunks covering [t0, t1] into out_dir and writes an ffmpeg concat list.
+        The concat reader rebuilds clean, continuous timestamps (plain joining caused frozen
+        video after reconnects/ads). Copies are used because the buffer is cleaned up while
+        clips wait in the queue. Returns (list_path, offset of t0, seconds missing)."""
         segs = self.segments()
         chosen = []
         for i, (start, path) in enumerate(segs):
@@ -174,11 +176,15 @@ class Recorder:
                 chosen.append((start, path))
         if not chosen:
             raise RuntimeError("no recorded video for that moment (stream offline or buffer too short)")
-        with open(out, "wb") as dst:
-            for _, path in chosen:
-                with open(path, "rb") as src:
-                    shutil.copyfileobj(src, dst)
-        return max(0.0, t0 - chosen[0][0])
+        missing = sum(max(0.0, b[0] - a[0] - SEG_SECONDS * 1.5) for a, b in zip(chosen, chosen[1:]))
+        names = []
+        for i, (_, path) in enumerate(chosen):
+            name = f"part_{i:03d}.ts"
+            shutil.copyfile(path, out_dir / name)
+            names.append(name)
+        lst = out_dir / "parts.txt"
+        lst.write_text("".join(f"file '{n}'\n" for n in names), encoding="utf-8")
+        return lst, max(0.0, t0 - chosen[0][0]), round(missing, 1)
 
     def clear(self):
         shutil.rmtree(self.dir, ignore_errors=True)

@@ -101,6 +101,24 @@ damage or rizz can't be generated, so those folders stay empty until you add a f
 on sites like myinstants are uploaded by users and may be copyrighted; free licensed sounds are
 on https://pixabay.com/sound-effects/.
 
+### 🎬 Reels style (one click)
+
+The look of popular GTA clip pages: the streamer's webcam fills the top, gameplay fills the
+bottom, and one headline sits on the line between them ("TypicalGamer sneaks into GTA 6's new
+military base"). No chat box, no word captions, no sound effects.
+- The webcam is **found automatically** (a face that stays in the same place). Draw it yourself
+  with **🎥 webcam** on the card if auto picks the wrong spot. With no webcam, gameplay fills the
+  screen.
+- Caption style `tiktok` = white box with black text, `impact` = big white outlined text.
+- Clips are rendered at 30 fps by default (smoother on a busy PC, smaller files).
+
+### Starting, stopping, restarting
+
+- **Stop**: click **⏻ Stop app** in the dashboard header, or double-click `stop.bat` (also frees
+  the AI model's memory).
+- **Start**: double-click `start.bat`. It first stops an old HypeClipper that is still running, so
+  updating is: download, replace the folder, double-click `start.bat`.
+
 ### Quick switches (top of the dashboard)
 
 One click, applies to the next clips:

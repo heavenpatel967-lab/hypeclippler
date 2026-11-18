@@ -1,6 +1,9 @@
 @echo off
-title HypeClipper
 cd /d "%~dp0"
+rem stop an old HypeClipper that is still running (and its recordings) before starting
+taskkill /F /T /FI "WINDOWTITLE eq HypeClipper*" >nul 2>nul
+taskkill /F /T /IM streamlink.exe >nul 2>nul
+title HypeClipper
 
 where python >nul 2>nul
 if errorlevel 1 (

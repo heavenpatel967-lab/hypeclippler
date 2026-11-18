@@ -236,3 +236,16 @@ def set_facecam(key: str, body: Facecam):
         box = [round(x, 4), round(y, 4), round(min(bw, 1 - x), 4), round(min(bh, 1 - y), 4)]
     manager.update(key, facecam=box)
     return manager.workers[key].info()
+
+
+@app.post("/api/shutdown")
+async def shutdown():
+    """Stops recordings and closes the app (the black window closes too)."""
+    async def bye():
+        await asyncio.sleep(0.5)
+        try:
+            await asyncio.wait_for(manager.shutdown(), timeout=10)
+        finally:
+            os._exit(0)
+    asyncio.get_running_loop().create_task(bye())
+    return {"ok": True}
