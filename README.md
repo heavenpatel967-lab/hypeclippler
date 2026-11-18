@@ -7,9 +7,12 @@ It reads each streamer's live chat. When chat suddenly gets much faster than nor
 the chat peak** and turns it into a ready-to-post **9:16 Short/Reel** with:
 
 - word-by-word captions (yellow highlight, bold outline) from local Whisper speech-to-text
-- a hook line burned at the top ("Nobody expected this")
+- **timed story captions at the top** that change with the action ("He had no idea..." →
+  "NO WAY" → "Chat lost it"), written by local AI from the clip's timeline
+- **sound effects placed on the key moments** (boom, airhorn, laugh, fail, bruh, wow, suspense riser)
+- **optional live chat box under the video**, for streams that don't show chat on screen
 - title, description and hashtags (local AI via Ollama, or a template if Ollama isn't installed)
-- a 16:9 copy of the same clip
+- a 16:9 copy of the same clip (no effects)
 
 Everything runs on your PC. No API keys, no subscriptions, no usage limits.
 
@@ -43,6 +46,36 @@ Linux/macOS: install `ffmpeg`, then run `./start.sh`.
   download 9:16 or 16:9.
 - Files are saved in `data/clips/<id>/` (`clip_9x16.mp4`, `clip_16x9.mp4`, `meta.json`).
 
+## Top captions, sound effects and chat box
+
+For every clip the app builds a timeline of what happens when:
+- **chat reactions**: bursts of laughing (`KEKW`, `LMAO`), hype (`POG`, `W`), shock (`NO WAY`, `WTF`),
+  fails (`L`, `RIP`), scared (`monkaS`) and "bruh" messages
+- **what the streamer says**: "no way", "let's go", "oh no", "bruh", laughing
+- **loud moments in the audio**: screams, crashes, explosions
+
+Chat reacts about 4 seconds after the action, so chat bursts are moved back and snapped to the
+nearest loud moment in the audio.
+
+- **Top captions:** Ollama gets the timeline and writes 4–7 short captions with times. If Ollama is
+  off or returns something unusable, a built-in set of captions is placed on the same moments.
+- **Sound effects:** up to 3 per clip (setting), at least 5 s apart, on the strongest moments, plus a
+  whoosh at the start. Laughing gets a laugh sound, hype gets an airhorn, a fail gets a sad
+  trombone, a shock gets a boom, and so on.
+- **Chat box:** tick **show chat in clips** when adding a streamer, or the **chat** box on their card.
+  The video moves up, captions go under it, and the real chat from that moment scrolls in a box at
+  the bottom with users' name colors. Huge chats are thinned to about 3–4 lines per second so it
+  stays readable.
+
+### Your own sound effects
+
+The built-in sounds are simple generated ones so the app works offline. For better sounds, click
+**Open sound effects folder** in Settings and drop `.mp3`/`.wav` files into the matching folder:
+`boom`, `airhorn`, `laugh`, `wow`, `fail`, `bruh`, `suspense`, `whoosh`. When a folder has your
+files, the built-in sound in it is no longer used, and the app picks a random file each time.
+`laugh` and `bruh` have no built-in sound, so they only play once you add files (until then, a boom
+plays instead). Free sounds: https://pixabay.com/sound-effects/ (check each sound's license).
+
 ## Tuning
 
 | Setting | What it does |
@@ -51,6 +84,8 @@ Linux/macOS: install `ffmpeg`, then run `./start.sh`.
 | Min chat speed (1.0/s) | Ignores "spikes" in tiny chats. |
 | Cooldown (90 s) | Minimum gap between auto clips of one streamer. |
 | Seconds before/after (20/20) | Clip window around the peak. |
+| Max sound effects per clip (3) | Not counting the intro whoosh. Set 0 or turn sound effects off to disable. |
+| Sound effect volume (0.8) | Volume of effects compared to the stream. |
 | Layout | `blur` = full 16:9 video on a blurred background, `crop` = fill the screen (cuts the sides). |
 | Recording quality | `720p60,720p,720p30,best` keeps bandwidth low. Use `1080p60,best` for sharper crop layouts. |
 | Whisper model | `large-v3-turbo` (best), `medium`, `small` (fastest). |
@@ -85,6 +120,10 @@ the same settings work for a 50-viewer stream and a 100k-viewer GTA 6 launch.
   to a new chat system and `app/chat.py` needs an update.
 - **Captions say "CPU"/are slow**: the GPU libraries didn't load. Make sure your NVIDIA driver is
   up to date. The app falls back to CPU automatically, which is slower but still works.
+- **No word captions at the bottom**: they only appear while the streamer is talking. Open the
+  clip's "Captions, sounds, transcript & chat" section: if Speech says "no speech detected",
+  Whisper heard nothing (music, game audio only). If it's empty on every clip, check the console
+  window for a `captions failed` line.
 - **encoder: libx264** in the header: NVENC isn't available. Update the NVIDIA driver.
 
 ## Copyright note

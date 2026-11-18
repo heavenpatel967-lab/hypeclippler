@@ -43,12 +43,13 @@ def display_name(platform, channel):
 
 
 class StreamerWorker:
-    def __init__(self, platform, channel, settings, topic="", auto_clip=True):
+    def __init__(self, platform, channel, settings, topic="", auto_clip=True, show_chat=False):
         self.platform, self.channel, self.settings = platform, channel, settings
         self.key = make_key(platform, channel)
         self.channel_name = display_name(platform, channel)
         self.topic = topic
         self.auto_clip = auto_clip
+        self.show_chat = show_chat  # draw the live chat box under the video in clips
         self.detector = HypeDetector(settings)
         self.chat_status = "starting"
         self.video_status = "starting"
@@ -63,8 +64,8 @@ class StreamerWorker:
     def _chat_status(self, s):
         self.chat_status = s
 
-    def _on_message(self, user, text, kind):
-        self.detector.add(user, text, kind)
+    def _on_message(self, user, text, kind, color=None):
+        self.detector.add(user, text, kind, color=color)
 
     def start(self):
         self.recorder.start()
@@ -101,12 +102,13 @@ class StreamerWorker:
 
     def info(self):
         return {"key": self.key, "platform": self.platform, "channel": self.channel, "name": self.channel_name,
-                "topic": self.topic, "auto_clip": self.auto_clip, "chat_status": self.chat_status,
+                "topic": self.topic, "auto_clip": self.auto_clip, "show_chat": self.show_chat, "chat_status": self.chat_status,
                 "video_status": self.video_status, "live": self.recorder.live, "clips_made": self.clips_made,
                 **self.detector.snapshot()}
 
     def config(self):
-        return {"platform": self.platform, "channel": self.channel, "topic": self.topic, "auto_clip": self.auto_clip}
+        return {"platform": self.platform, "channel": self.channel, "topic": self.topic, "auto_clip": self.auto_clip,
+                "show_chat": self.show_chat}
 
 
 class Manager:
@@ -118,18 +120,19 @@ class Manager:
         for s in self.settings["streamers"]:
             try:
                 await self.add(s["channel"], s.get("platform"), s.get("topic", ""), s.get("auto_clip", True),
+                               s.get("show_chat", False),
                                save=False)
             except Exception as e:  # noqa: BLE001
                 log.warning("could not start %s: %s", s, e)
 
-    async def add(self, channel, platform=None, topic="", auto_clip=True, save=True):
+    async def add(self, channel, platform=None, topic="", auto_clip=True, show_chat=False, save=True):
         platform, channel = parse_channel(channel, platform)
         if platform not in READERS:
             raise ValueError(f"unknown platform {platform}")
         key = make_key(platform, channel)
         if key in self.workers:
             raise ValueError("already watching this streamer")
-        w = StreamerWorker(platform, channel, self.settings, topic, auto_clip)
+        w = StreamerWorker(platform, channel, self.settings, topic, auto_clip, show_chat)
         self.workers[key] = w
         w.start()
         log.info("Watching %s on %s", w.channel_name, platform)
@@ -144,12 +147,14 @@ class Manager:
             self._save()
         return w is not None
 
-    def update(self, key, topic=None, auto_clip=None):
+    def update(self, key, topic=None, auto_clip=None, show_chat=None):
         w = self.workers[key]
         if topic is not None:
             w.topic = topic
         if auto_clip is not None:
             w.auto_clip = bool(auto_clip)
+        if show_chat is not None:
+            w.show_chat = bool(show_chat)
         self._save()
 
     def _save(self):

@@ -48,7 +48,7 @@ class HypeDetector:
         self.settings = settings
         self.started = time.time()
         self.events = deque()            # (ts, score, user, text)
-        self.recent_text = deque()       # (ts, text) kept ~2 minutes for titles
+        self.recent_text = deque()       # (ts, user, text, color, kind) kept ~3 minutes for clips
         self.baseline = None             # normal score per second
         self.history = deque(maxlen=180) # (ts, rate) for the dashboard graph
         self.in_hype = False
@@ -58,22 +58,28 @@ class HypeDetector:
         self.last_clip = 0.0
         self.total_messages = 0
 
-    def add(self, user: str, text: str, kind: str = "chat", ts: float | None = None):
+    def add(self, user: str, text: str, kind: str = "chat", ts: float | None = None, color: str | None = None):
         ts = ts or time.time()
         self.events.append((ts, message_score(text, kind), user, text))
-        self.recent_text.append((ts, text))
+        self.recent_text.append((ts, user, text, color, kind))
         self.total_messages += 1
 
     def rate(self, now: float) -> float:
         while self.events and self.events[0][0] < now - self.WINDOW:
             self.events.popleft()
-        while self.recent_text and self.recent_text[0][0] < now - 120:
+        while self.recent_text and self.recent_text[0][0] < now - 180:
             self.recent_text.popleft()
         return sum(e[1] for e in self.events) / self.WINDOW
 
     def messages_between(self, start: float, end: float, limit: int = 60):
-        msgs = [t for ts, t in self.recent_text if start <= ts <= end]
+        """Plain message texts (for titles)."""
+        msgs = [m[2] for m in list(self.recent_text) if start <= m[0] <= end]
         return msgs[-limit:]
+
+    def chat_log(self, start: float, end: float):
+        """Full messages with times relative to `start`, for overlays and sound effects."""
+        return [{"t": round(m[0] - start, 2), "user": m[1], "text": m[2], "color": m[3], "kind": m[4]}
+                for m in list(self.recent_text) if start <= m[0] <= end]
 
     def tick(self, now: float | None = None):
         """Call once per second. Returns a moment dict when a hype moment finished."""

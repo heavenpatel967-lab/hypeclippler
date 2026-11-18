@@ -1,7 +1,7 @@
 """Live chat readers for Twitch, Kick and YouTube. No API keys, no quotas.
 
 Each reader is an async function that keeps reconnecting until `stop` is set and
-calls on_message(user, text, kind) for every message. kind is "chat" or "event"
+calls on_message(user, text, kind, color=None) for every message. kind is "chat" or "event"
 (subs, bits, donations, super chats). Events count extra in the hype score.
 """
 import asyncio
@@ -69,7 +69,7 @@ async def twitch_chat(channel: str, on_message, stop: asyncio.Event, status):
                         elif cmd == "PRIVMSG" and len(params) >= 2:
                             user = tags.get("display-name") or prefix.split("!")[0]
                             kind = "event" if tags.get("bits") else "chat"
-                            on_message(user, params[1], kind)
+                            on_message(user, params[1], kind, tags.get("color") or None)
                         elif cmd == "USERNOTICE":
                             on_message(tags.get("login", "?"), tags.get("msg-id", "sub"), "event")
                         elif cmd == "RECONNECT":
@@ -147,8 +147,9 @@ async def kick_chat(slug: str, on_message, stop: asyncio.Event, status):
                             seen.clear()
                         content = data.get("content", "")
                         content = re.sub(r"\[emote:\d+:([^\]]+)\]", r"\1", content)
-                        user = (data.get("sender") or {}).get("username", "?")
-                        on_message(user, content, "chat")
+                        sender = data.get("sender") or {}
+                        color = (sender.get("identity") or {}).get("color")
+                        on_message(sender.get("username", "?"), content, "chat", color)
                     elif "Subscription" in event or "GiftedSubscriptions" in event or "Kicks" in event:
                         on_message("kick", event.split("\\")[-1], "event")
         except Exception as e:  # noqa: BLE001
