@@ -90,9 +90,64 @@ def _safe(name):
 
 
 # --------------------------------------------------------------- downloads
+DEFAULT_FOLDER = Path.home() / "Videos" / "HypeClipper"
+
+
 def download_folder(settings) -> Path:
+    """The root download folder (falls back to the default if the saved one is unusable)."""
     raw = settings["download_folder"].strip()
-    folder = Path(raw).expanduser() if raw else Path.home() / "Videos" / "HypeClipper"
+    folder = Path(raw).expanduser() if raw else DEFAULT_FOLDER
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+    except OSError as e:  # e.g. a USB drive that was unplugged
+        log.warning("download folder %s not usable (%s), using %s", folder, e, DEFAULT_FOLDER)
+        folder = DEFAULT_FOLDER
+        folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def check_folder(path: str) -> str:
+    """Validates a new root folder: creates it and makes sure files can be written there."""
+    raw = path.strip().strip('"')
+    if not raw:
+        return ""
+    folder = Path(raw).expanduser()
+    if not folder.is_absolute():
+        raise ValueError("use a full path, like D:\\Clips")
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        test = folder / ".hypeclipper_write_test"
+        test.write_text("ok")
+        test.unlink()
+    except OSError as e:
+        raise ValueError(f"can't save files there: {e}")
+    return str(folder)
+
+
+def choose_folder(start: str = "") -> str | None:
+    """Opens a Windows/macOS/Linux folder picker on this PC. Returns the chosen path or None."""
+    import tkinter
+    from tkinter import filedialog
+    root = tkinter.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)  # show it in front of the browser
+    try:
+        path = filedialog.askdirectory(title="Choose the HypeClipper download folder",
+                                       initialdir=start or str(Path.home()), mustexist=False, parent=root)
+    finally:
+        root.destroy()
+    return path or None
+
+
+def _target_folder(meta, settings) -> Path:
+    root = download_folder(settings)
+    mode = settings["download_subfolders"]
+    parts = []
+    if mode in ("streamer", "streamer_date"):
+        parts.append(_safe(meta["streamer"]))
+    if mode in ("date", "streamer_date"):
+        parts.append(meta["peak_time"][:10])
+    folder = root.joinpath(*parts)
     folder.mkdir(parents=True, exist_ok=True)
     return folder
 
@@ -102,7 +157,7 @@ def save_to_folder(clip_id, settings):
     meta = load_meta(clip_id)
     if not meta:
         raise ValueError("clip not found")
-    folder = download_folder(settings)
+    folder = _target_folder(meta, settings)
     base = _safe(f"{meta['peak_time'][:16].replace(':', '-')} {meta['streamer']} - {meta.get('title', '')}")
     src = CLIPS / clip_id / "clip_9x16.mp4"
     dst = folder / f"{base}.mp4"
