@@ -239,9 +239,45 @@ def _top_caption_text(text, style, color, index):
     return f"{{{pop}}}" + " ".join(words)
 
 
+def _wrap(text, max_chars):
+    lines, cur = [], ""
+    for word in text.split():
+        if cur and len(cur) + 1 + len(word) > max_chars:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = f"{cur} {word}".strip()
+    if cur:
+        lines.append(cur)
+    if len(lines) > 1 and len(lines[-1]) < 6:  # no lonely last word
+        last = lines.pop()
+        lines[-1] = f"{lines[-1]} {last}"
+    return lines[:4]
+
+
+HEADLINE_STYLES = {
+    # white box, black bold text, normal case (like most GTA clip pages)
+    "tiktok": ("Style: Head,Arial,62,&H00101010,&H00101010,&H00FFFFFF,&H00FFFFFF,-1,0,0,0,100,100,0,0,3,16,0,5,60,60,0,1",
+               24, False),
+    # big white text, thick black outline, uppercase
+    "impact": ("Style: Head,Impact,86,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,0,0,0,0,100,100,1,0,1,7,3,5,60,60,0,1",
+               22, True),
+}
+
+
+def headline_events(text, duration, y, style):
+    head, max_chars, upper = HEADLINE_STYLES.get(style, HEADLINE_STYLES["tiktok"])
+    text = _clean(text).strip()
+    if not text:
+        return head, []
+    lines = _wrap(text.upper() if upper else text, max_chars)
+    return head, [f"Dialogue: 4,{_ts(0)},{_ts(duration)},Head,,0,0,0,,"
+                  f"{{\\an5\\pos(540,{y})\\fad(150,0)}}" + "\\N".join(lines)]
+
+
 def build_ass(words, duration: float, top_captions: list, layout: str, font: str, burn_top: bool,
               chat=None, show_chat=False, caption_position="above", top_style="pop",
-              word_color="yellow", geo=None) -> str:
+              word_color="yellow", geo=None, caption_mode="story", headline="") -> str:
     g = geo or geometry(layout, show_chat, caption_position)
     hl = WORD_COLORS.get(word_color, WORD_COLORS["yellow"])
     if top_style == "box":
@@ -267,7 +303,12 @@ def build_ass(words, duration: float, top_captions: list, layout: str, font: str
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     ]
 
-    if burn_top and top_captions:
+    if burn_top and caption_mode == "title":
+        head, events = headline_events(headline or (top_captions[0]["text"] if top_captions else ""), duration,
+                                       g.get("title_y", g["top_y"]), top_style)
+        lines.insert(lines.index("[Events]") - 1, head)
+        lines += events
+    elif burn_top and top_captions:
         caps = sorted(top_captions, key=lambda c: c["time"])
         for i, c in enumerate(caps):
             start = c["time"]

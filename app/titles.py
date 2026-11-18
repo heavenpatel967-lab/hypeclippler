@@ -52,6 +52,7 @@ def _fallback(ctx):
     caps = ctx["fallback_captions"]
     return {
         "title": title[:95],
+        "headline": title.split(" | ")[0][:95],
         "hook": caps[0]["text"] if caps else "",
         "description": (f'{s}{" in " + topic if topic else ""}: ' +
                         (f'"{quote}". ' if quote else "") + "Chat went wild at this moment.\n"
@@ -91,6 +92,7 @@ SCHEMA = {
         "start": {"type": "number"},
         "end": {"type": "number"},
         "title": {"type": "string"},
+        "headline": {"type": "string"},
         "captions": {"type": "array", "items": {"type": "object", "properties": {
             "time": {"type": "number"}, "text": {"type": "string"}}, "required": ["time", "text"]}},
         "sounds": {"type": "array", "items": {"type": "object", "properties": {
@@ -99,7 +101,7 @@ SCHEMA = {
         "description": {"type": "string"},
         "hashtags": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["story", "score", "start", "end", "title", "captions", "sounds", "description", "hashtags"],
+    "required": ["story", "score", "start", "end", "title", "headline", "captions", "sounds", "description", "hashtags"],
 }
 
 
@@ -137,6 +139,10 @@ Answer in JSON:
 "reason": one short sentence for the score.
 {trim}
 "title": under 70 characters, specific to what happens, includes {ctx['streamer']}, makes people click.
+"headline": ONE on-screen sentence shown for the whole clip, 5-12 words, normal case, names the
+  streamer and says exactly what happens or what he does, like a news headline. Examples (other clips):
+  "TypicalGamer sneaks into GTA 6's new military base", "xQc thinks GTA 6 looks like real life",
+  "Bro is on a mission to ruin relationships". No emojis.
 "captions": 4-7 items {{"time": seconds, "text": "2-6 words"}} telling the story as it happens:
   first one at "start" sets it up so people keep watching, the others land exactly on the
   action/reaction. Name concrete things (the cops, the car, the boss, his exact words). Quote
@@ -168,6 +174,7 @@ Times are seconds of the recording (0-{d:.0f})."""
                 score = None
             return {
                 "title": title,
+                "headline": str(data.get("headline", "")).strip().strip('"')[:110] or title,
                 "hook": caps[0]["text"] if caps else fb["hook"],
                 "description": str(data.get("description", "")).strip() or fb["description"],
                 "hashtags": tags or fb["hashtags"],

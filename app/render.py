@@ -44,7 +44,8 @@ def geometry(layout, show_chat, caption_position="above", zoom=1.2, cam_box=None
         x, y, w, h = cam_box
         cam_h = _even(min(860, max(480, W * (h * src_h) / max(1, w * src_w))))
         game_h = H - cam_h
-        g = {"kind": "facecam", "cam_h": cam_h, "game_h": game_h, "top_y": cam_h + 115}
+        # title_y: one headline caption sitting on the line between webcam and gameplay
+        g = {"kind": "facecam", "cam_h": cam_h, "game_h": game_h, "top_y": cam_h + 115, "title_y": cam_h}
         if show_chat:
             chat_h = 480
             g["chat"] = (40, H - chat_h - 30, 1000, chat_h)
@@ -55,7 +56,7 @@ def geometry(layout, show_chat, caption_position="above", zoom=1.2, cam_box=None
         return g
 
     if layout == "crop":
-        g = {"kind": "crop", "top_y": 260}
+        g = {"kind": "crop", "top_y": 260, "title_y": 560}
         if show_chat:
             g.update(chat=(40, 1260, 1000, 620), cap_y=470 if caption_position == "above" else 1100)
         else:
@@ -67,7 +68,7 @@ def geometry(layout, show_chat, caption_position="above", zoom=1.2, cam_box=None
     video_y = _even((H - video_h) / 2)
     bottom = video_y + video_h
     g = {"kind": "blur", "zoom": zoom, "video_h": video_h, "video_y": video_y,
-         "top_y": max(150, video_y - 330)}
+         "top_y": max(150, video_y - 330), "title_y": max(200, video_y - 150)}
     above = video_y - 78
     if show_chat:
         y0 = bottom + 28
@@ -113,8 +114,7 @@ def video_filter(g, src, cam_box=None, punch_times=None, fps=30.0):
         return (f"[0:v]split=2[c][g];"
                 f"[c]crop=w=iw*{w:.4f}:h=ih*{h:.4f}:x=iw*{x:.4f}:y=ih*{y:.4f},"
                 f"scale={W}:{cam_h}:force_original_aspect_ratio=increase:flags=lanczos,crop={W}:{cam_h}[cam];"
-                f"{game}[game];[cam][game]vstack=inputs=2,"
-                f"drawbox=x=0:y={cam_h - 3}:w=iw:h=6:color=0xFFD400@1:t=fill,{end}")
+                f"{game}[game];[cam][game]vstack=inputs=2,{end}")
     if g["kind"] == "crop":
         return (f"[0:v]scale=-2:{H}:flags=lanczos,crop={W}:{H}" + _zoompan(punch_times, (W, H), fps) + f",{end}")
     zoom, video_h = g["zoom"], g["video_h"]
