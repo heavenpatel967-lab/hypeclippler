@@ -101,6 +101,15 @@ damage or rizz can't be generated, so those folders stay empty until you add a f
 on sites like myinstants are uploaded by users and may be copyrighted; free licensed sounds are
 on https://pixabay.com/sound-effects/.
 
+### Quick switches (top of the dashboard)
+
+One click, applies to the next clips:
+- **🎯 Clean mode**: no sound effects, no intro whoosh, no zoom punch. Just the real moment and
+  the streamer's reaction (captions stay; switch them off with their own buttons if you want).
+- **✨ Full edit**: sound effects, whoosh and zoom punches back on.
+- Separate switches: 🔊 sound effects, 💨 intro whoosh, 🔍 zoom punch, 📝 top captions,
+  💬 word captions, ✂ AI best cut.
+
 ### Only the best moments
 
 A chat spike alone isn't enough anymore. A moment has to pass four checks:
@@ -112,8 +121,9 @@ A chat spike alone isn't enough anymore. A moment has to pass four checks:
    what happens, gives the clip a 1-10 virality score with a reason, and clips under **Min AI clip
    score** (5) are thrown away. They show as "skipped" with the reason in Processing.
    Without AI, the app's own score (hype, number of chatters, speech, loud moments) is used.
-4. **Best cut**: the app records 10 s more before and 6 s more after, and the AI picks the part
-   worth posting (15-50 s): starting just before the action, ending right after the reaction.
+4. **Best cut**: the app records 15 s more before and 10 s more after, and the AI picks the part
+   worth posting, keeping 10-15 s of build-up and the whole reaction. Clips are 30-58 s
+   (settings: Shortest / Longest clip).
    **✂ Clip now** clips are never skipped or trimmed.
 
 ### Layouts and video quality

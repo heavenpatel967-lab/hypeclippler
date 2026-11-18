@@ -118,7 +118,9 @@ def _process(job_id, streamer, moment, settings, manual):
     try:
         pre, post = settings["pre_seconds"], settings["post_seconds"]
         trim = settings["smart_trim"] and not manual
-        extra_pre, extra_post = (10, 6) if trim else (0, 0)  # wider recording, AI cuts the best part
+        extra_pre, extra_post = (15, 10) if trim else (0, 0)  # wider recording, AI cuts the best part
+        min_len = float(settings["min_clip_seconds"])
+        max_len = float(max(settings["max_clip_seconds"], min_len + 5))
         t0 = moment["peak_ts"] - pre - extra_pre
         t1 = moment["peak_ts"] + post + extra_post
         ready_at = t1 + SEG_SECONDS + 2
@@ -179,6 +181,7 @@ def _process(job_id, streamer, moment, settings, manual):
                 "streamer": streamer.channel_name, "platform": streamer.platform, "topic": topic,
                 "chat": chat, "chat_digest": digest, "duration": duration, "main_cat": main_cat,
                 "seed": job_id, "hype_score": moment.get("score"), "trim": trim,
+                "min_len": min_len, "max_len": max_len,
                 "timeline": story.timeline_text(moments, words, duration, scenes_found),
                 "fallback_captions": fallback_caps, "quote": story.best_quote(words, moments),
                 "recent_captions": recent["captions"], "recent_titles": recent["titles"],
@@ -198,7 +201,8 @@ def _process(job_id, streamer, moment, settings, manual):
                 return
 
             # ---- cut the best part
-            start, end = story.smart_window(moments, words, duration, ai_window) if trim else (0.0, duration)
+            start, end = (story.smart_window(moments, words, duration, ai_window, min_len, max_len)
+                          if trim else (0.0, duration))
             clip_len = end - start
             wide = out_dir / "clip_16x9.mp4"
             tools.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{start:.2f}", "-i", str(full),
@@ -231,7 +235,7 @@ def _process(job_id, streamer, moment, settings, manual):
             geo = render.geometry(layout, show_chat, settings["caption_position"], settings["video_zoom"],
                                   cam_box, (src_w, src_h))
             (out_dir / "captions.ass").write_text(
-                captions.build_ass(words, clip_len, meta_text["captions"], layout, settings["caption_font"],
+                captions.build_ass(words if settings["word_captions"] else [], clip_len, meta_text["captions"], layout, settings["caption_font"],
                                    settings["burn_hook"], chat_log, show_chat, settings["caption_position"],
                                    settings["top_caption_style"], settings["word_color"], geo=geo),
                 encoding="utf-8")
