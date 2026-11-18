@@ -43,9 +43,6 @@ DEFAULTS = {
     # titles (local, free)
     "ollama_url": "http://localhost:11434",
     "ollama_model": "llama3.2:3b",
-    # Kick chat server (only change if Kick changes it)
-    "kick_pusher_key": "32cbd69e4b950bf97679",
-    "kick_pusher_cluster": "us2",
     # web dashboard
     "host": "127.0.0.1",
     "port": 8000,

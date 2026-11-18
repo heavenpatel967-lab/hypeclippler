@@ -150,10 +150,10 @@ the same settings work for a 50-viewer stream and a 100k-viewer GTA 6 launch.
 
 - **"offline, checking every 30s"**: the streamer isn't live. The app keeps checking and starts
   recording when they go live.
-- **Kick chat keeps reconnecting**: Kick sometimes changes its chat server. Open kick.com in
-  Chrome, press F12, go to Network > WS, find `ws-<cluster>.pusher.com/app/<key>`, and paste the
-  key and cluster into the settings. If there's no pusher.com connection at all, Kick has moved
-  to a new chat system and `app/chat.py` needs an update.
+- **Kick chat keeps reconnecting**: Kick moved its chat to a new system (Centrifugo) on
+  13 Oct 2026. The app now connects the same way the kick.com website does: it asks Kick which chat
+  server to use, gets an anonymous guest token and subscribes to the chatroom. If it breaks
+  again, the status on the streamer card shows Kick's error; send it in an issue.
 - **Captions say "CPU"/are slow**: the GPU libraries didn't load. Make sure your NVIDIA driver is
   up to date. The app falls back to CPU automatically, which is slower but still works.
 - **No word captions at the bottom**: they only appear while the streamer is talking. Open the
