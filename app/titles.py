@@ -96,6 +96,9 @@ Only JSON."""
         }
         if out["title"]:
             return {k: v or fb[k] for k, v in out.items()}
+        reason = "it returned no title"
     except Exception as e:  # noqa: BLE001
-        log.info("Ollama not available (%s); using template titles", type(e).__name__)
+        reason = f"{type(e).__name__}: {str(e)[:120]}"
+    log.warning("Ollama not used (%s); using template titles", reason)
+    fb["source"] = f"template (Ollama: {reason})"
     return fb

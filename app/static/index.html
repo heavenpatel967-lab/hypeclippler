@@ -97,6 +97,7 @@
   </form>
 </main>
 <div class="toast" id="toast"></div>
+<div id="restart" style="display:none;position:fixed;top:0;left:0;right:0;background:#ff5c5c;color:#000;font-weight:700;padding:10px 24px;z-index:9;text-align:center">HypeClipper was updated but the old version is still running. Close the black HypeClipper window and double-click start.bat again.</div>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -198,6 +199,7 @@ async function loadClips() {
       <div class="title">${esc(c.title)}</div>
       <div class="desc">${esc(c.description)}</div>
       <div class="tags">${esc((c.hashtags || []).join(" "))}</div>
+      <div class="small">${c.show_chat ? "chat box ✓ · " : ""}${(c.sfx || []).length} sound effects · titles: ${esc(c.source || "?")}</div>
       <div class="actions">
         <button class="copy">Copy title + text</button>
         <a href="${esc(c.files.vertical)}" download="${esc(c.streamer + "_" + c.id)}_9x16.mp4"><button>⬇ 9:16</button></a>
@@ -224,7 +226,8 @@ const SETTINGS = [
   ["quality", "Recording quality"], ["layout", "Layout", ["blur", "crop"]], ["burn_hook", "Top story captions", ["true", "false"]],
   ["sfx_enabled", "Sound effects", ["true", "false"]], ["max_sfx", "Max sound effects per clip"], ["sfx_volume", "Sound effect volume (0.1-1.5)"],
   ["sfx_intro_whoosh", "Whoosh at clip start", ["true", "false"]],
-  ["caption_position", "Word captions position", ["above", "on_video", "below"]], ["caption_font", "Caption font"], ["default_topic", "Default game/topic"],
+  ["caption_position", "Word captions position", ["above", "on_video", "below"]],
+  ["top_caption_style", "Top caption style", ["pop", "box", "classic"]], ["word_color", "Word highlight colour", ["yellow", "green", "red", "cyan", "pink"]], ["caption_font", "Caption font"], ["default_topic", "Default game/topic"],
   ["whisper_model", "Whisper model", ["large-v3-turbo", "medium", "small", "base"]], ["whisper_device", "Whisper device", ["auto", "cuda", "cpu"]],
   ["ollama_model", "Ollama model"], ["ollama_url", "Ollama URL"],
   ["kick_pusher_key", "Kick chat key (change only if Kick breaks)"], ["kick_pusher_cluster", "Kick chat cluster"],
@@ -244,8 +247,10 @@ $("#settingsForm").onsubmit = async e => {
   await loadSettings(); toast("Settings saved");
 };
 
+const UI_VERSION = "0.4.0";
 async function loadHealth() {
   const h = await api("/api/health");
+  $("#restart").style.display = h.version === UI_VERSION ? "none" : "block";
   $("#health").innerHTML = [
     h.ffmpeg ? `<span class="badge ok">ffmpeg ✓</span>` : `<span class="badge bad">ffmpeg missing</span>`,
     h.encoder ? `<span class="badge ${h.encoder.includes("nvenc") ? "ok" : ""}">encoder: ${esc(h.encoder)}</span>` : "",

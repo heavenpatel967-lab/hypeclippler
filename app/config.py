@@ -27,7 +27,9 @@ DEFAULTS = {
     # output
     "layout": "blur",            # blur = 16:9 video on blurred 9:16 background, crop = fill screen
     "caption_position": "above",  # word captions: above | on_video | below the video
-    "burn_hook": True,           # burn the timed story captions at the top of the clip
+    "burn_hook": True,
+    "top_caption_style": "pop",   # pop | box | classic
+    "word_color": "yellow",       # yellow | green | red | cyan | pink           # burn the timed story captions at the top of the clip
     # sound effects (sfx/<kind>/ folders)
     "sfx_enabled": True,
     "sfx_volume": 0.8,

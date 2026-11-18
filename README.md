@@ -97,6 +97,21 @@ damage or rizz can't be generated, so those folders stay empty until you add a f
 on sites like myinstants are uploaded by users and may be copyrighted; free licensed sounds are
 on https://pixabay.com/sound-effects/.
 
+### Caption looks
+
+- **Top caption style** (Settings): `pop` (default) is big white text with a thick black outline,
+  a small tilt, a bounce-in animation and the key word coloured by the mood of the moment:
+  yellow = funny/setup, green = hype, orange = shock, red = fail, purple = scary, cyan = bruh.
+  `box` puts the text in a box with the same mood colours. `classic` is the old black box.
+- **Word highlight colour**: colour of the word being spoken (yellow, green, red, cyan, pink). The
+  active word also bounces.
+
+## Updating
+
+After downloading a new version, **close the black HypeClipper window and run `start.bat` again**.
+Refreshing the browser alone loads the new dashboard but keeps the old engine running; the
+dashboard shows a red bar when that happens.
+
 ## Tuning
 
 | Setting | What it does |
