@@ -1,0 +1,154 @@
+"""Turns a hype moment into a finished 9:16 clip with captions, hook, title and hashtags."""
+import json
+import logging
+import threading
+import time
+import uuid
+from datetime import datetime
+from pathlib import Path
+
+from . import captions, titles, tools
+from .config import CLIPS
+from .recorder import SEG_SECONDS
+
+log = logging.getLogger("clipper")
+
+# One heavy job (whisper + LLM + encode) at a time so the GPU isn't overloaded.
+# Cutting from the buffer happens right away, outside this lock, so a long
+# queue never loses video.
+_heavy = threading.Semaphore(1)
+jobs: dict[str, dict] = {}
+_jobs_lock = threading.Lock()
+
+
+def _set(job_id, **kw):
+    with _jobs_lock:
+        jobs[job_id].update(kw)
+
+
+def list_jobs():
+    now = time.time()
+    with _jobs_lock:
+        for jid in [k for k, j in jobs.items()
+                    if j["state"] == "done" or (j["state"] == "failed" and now - j.get("ended", now) > 600)]:
+            del jobs[jid]
+        return [dict(j) for j in jobs.values()]
+
+
+def list_clips():
+    out = []
+    for meta in CLIPS.glob("*/meta.json"):
+        try:
+            out.append(json.loads(meta.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            continue
+    out.sort(key=lambda m: m.get("created", 0), reverse=True)
+    return out
+
+
+def submit(streamer, moment: dict, settings, manual=False):
+    job_id = datetime.now().strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:4]
+    with _jobs_lock:
+        jobs[job_id] = {"id": job_id, "streamer": streamer.channel_name, "platform": streamer.platform,
+                        "state": "waiting for video", "score": moment.get("score"), "error": None}
+    chat = streamer.detector.messages_between(moment["peak_ts"] - 15, moment["peak_ts"] + 10)
+    t = threading.Thread(target=_process, args=(job_id, streamer, moment, settings, chat, manual),
+                         name=f"clip-{job_id}", daemon=True)
+    t.start()
+    return job_id
+
+
+def _process(job_id, streamer, moment, settings, chat, manual):
+    out_dir = CLIPS / job_id
+    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        pre, post = settings["pre_seconds"], settings["post_seconds"]
+        t0, t1 = moment["peak_ts"] - pre, moment["peak_ts"] + post
+        ready_at = t1 + SEG_SECONDS + 2
+        while time.time() < ready_at:
+            time.sleep(0.5)
+
+        _set(job_id, state="cutting")
+        src = out_dir / "source.ts"
+        offset = streamer.recorder.export(t0, t1, src)
+        duration = t1 - t0
+        ff = tools.ffmpeg()
+        enc = tools.video_encoder()
+
+        with _heavy:
+            wide = out_dir / "clip_16x9.mp4"
+            tools.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{offset:.2f}", "-i", str(src),
+                       "-t", f"{duration:.2f}", "-map", "0:v:0", "-map", "0:a:0?", *enc,
+                       "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(wide)])
+            src.unlink(missing_ok=True)
+
+            _set(job_id, state="captioning")
+            try:
+                words, lang = captions.transcribe(wide, settings)
+            except Exception as e:  # noqa: BLE001 - a clip without captions is better than none
+                log.warning("captions failed: %s", e)
+                words, lang = [], "?"
+            transcript = " ".join(w["word"] for w in words)
+
+            _set(job_id, state="writing title")
+            meta_text = titles.generate(settings, streamer.channel_name, streamer.platform,
+                                        streamer.topic or settings["default_topic"], chat, transcript,
+                                        moment.get("score", 0))
+
+            _set(job_id, state="rendering 9:16")
+            layout = settings["layout"]
+            (out_dir / "captions.ass").write_text(
+                captions.build_ass(words, duration, meta_text["hook"], layout,
+                                   settings["caption_font"], settings["burn_hook"]), encoding="utf-8")
+            if layout == "crop":
+                vf = "[0:v]scale=-2:1920,crop=1080:1920,ass=captions.ass,format=yuv420p[v]"
+            else:
+                # background: blurred at low resolution (fast), then scaled up
+                vf = ("[0:v]split=2[a][b];[a]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,"
+                      "boxblur=10:2,scale=1080:1920,eq=brightness=-0.12[bg];[b]scale=1080:-2[fg];"
+                      "[bg][fg]overlay=(W-w)/2:(H-h)/2,ass=captions.ass,format=yuv420p[v]")
+            # cwd=out_dir so the subtitle path has no "C:\" (ffmpeg filter escaping on Windows)
+            tools.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-i", wide.name, "-filter_complex", vf,
+                       "-map", "[v]", "-map", "0:a?", *enc, "-c:a", "copy", "-movflags", "+faststart",
+                       "clip_9x16.mp4"], cwd=out_dir)
+            tools.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{min(pre, duration / 2):.2f}",
+                       "-i", "clip_9x16.mp4", "-frames:v", "1", "-vf", "scale=360:-2", "thumb.jpg"], cwd=out_dir)
+
+        meta = {
+            "id": job_id,
+            "created": time.time(),
+            "streamer": streamer.channel_name,
+            "platform": streamer.platform,
+            "peak_time": datetime.fromtimestamp(moment["peak_ts"]).strftime("%Y-%m-%d %H:%M:%S"),
+            "score": moment.get("score"),
+            "manual": manual,
+            "duration": round(duration, 1),
+            "language": lang,
+            "transcript": transcript,
+            "chat": chat[-25:],
+            **meta_text,
+            "files": {"vertical": f"/clips/{job_id}/clip_9x16.mp4", "wide": f"/clips/{job_id}/clip_16x9.mp4",
+                      "thumb": f"/clips/{job_id}/thumb.jpg"},
+        }
+        (out_dir / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+        _set(job_id, state="done")
+        log.info("Clip ready: %s - %s", streamer.channel_name, meta["title"])
+    except Exception as e:  # noqa: BLE001
+        log.exception("clip %s failed", job_id)
+        _set(job_id, state="failed", error=str(e)[:300], ended=time.time())
+        for f in out_dir.glob("*"):
+            f.unlink(missing_ok=True)
+        try:
+            out_dir.rmdir()
+        except OSError:
+            pass
+
+
+def delete_clip(clip_id: str) -> bool:
+    d = (CLIPS / clip_id).resolve()
+    if d.parent != CLIPS.resolve() or not d.is_dir():
+        return False
+    for f in d.glob("*"):
+        f.unlink(missing_ok=True)
+    d.rmdir()
+    return True

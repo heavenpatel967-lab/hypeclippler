@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HypeClipper</title>
+<style>
+  :root { --bg:#0e0f13; --card:#171920; --line:#262a35; --text:#e8e9ee; --dim:#8b90a0;
+          --twitch:#9146ff; --kick:#53fc18; --youtube:#ff3b3b; --hype:#ffd400; --ok:#3ddc84; --bad:#ff5c5c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; align-items:center; gap:16px; padding:14px 24px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header h1 { font-size:20px; margin:0; } header h1 span { color:var(--hype); }
+  .badges { display:flex; gap:8px; flex-wrap:wrap; margin-left:auto; }
+  .badge { padding:3px 10px; border-radius:99px; background:var(--card); border:1px solid var(--line); font-size:12px; color:var(--dim); }
+  .badge.ok { color:var(--ok); border-color:#245a3c; } .badge.bad { color:var(--bad); border-color:#5a2424; }
+  main { padding:20px 24px; max-width:1500px; margin:auto; }
+  h2 { font-size:15px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); margin:28px 0 12px; }
+  form.add { display:flex; gap:8px; flex-wrap:wrap; }
+  input, select, button, textarea { font:inherit; color:var(--text); background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 12px; }
+  input:focus, select:focus { outline:1px solid var(--hype); }
+  button { cursor:pointer; } button:hover { border-color:#444a5c; }
+  button.primary { background:var(--hype); color:#000; border:none; font-weight:700; }
+  button.danger:hover { border-color:var(--bad); color:var(--bad); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(310px,1fr)); gap:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; }
+  .card.hype { border-color:var(--hype); box-shadow:0 0 0 1px var(--hype), 0 0 24px #ffd40033; }
+  .row { display:flex; align-items:center; gap:8px; }
+  .name { font-weight:700; font-size:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .plat { font-size:11px; font-weight:700; padding:2px 7px; border-radius:5px; color:#000; text-transform:uppercase; }
+  .plat.twitch { background:var(--twitch); color:#fff; } .plat.kick { background:var(--kick); } .plat.youtube { background:var(--youtube); color:#fff; }
+  .dot { width:9px; height:9px; border-radius:50%; background:#555; flex:none; } .dot.live { background:var(--bad); box-shadow:0 0 8px var(--bad); }
+  .small { font-size:12px; color:var(--dim); }
+  .meter { height:8px; background:#22252e; border-radius:9px; overflow:hidden; margin:10px 0 6px; }
+  .meter div { height:100%; background:linear-gradient(90deg,#3ddc84,#ffd400,#ff5c5c); transition:width .4s; }
+  canvas { width:100%; height:46px; display:block; }
+  .actions { display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; } .actions button, .actions input { padding:6px 10px; font-size:13px; }
+  .actions input { flex:1; min-width:90px; }
+  label.toggle { display:flex; align-items:center; gap:6px; font-size:13px; color:var(--dim); }
+  .jobs { display:flex; flex-direction:column; gap:6px; }
+  .job { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 12px; display:flex; gap:10px; }
+  .job .state { color:var(--hype); } .job.failed .state { color:var(--bad); }
+  .clips { display:grid; grid-template-columns:repeat(auto-fill,minmax(270px,1fr)); gap:16px; }
+  .clip video { width:100%; aspect-ratio:9/16; background:#000; border-radius:8px; }
+  .clip .title { font-weight:700; margin:8px 0 4px; }
+  .clip .desc { font-size:13px; color:var(--dim); white-space:pre-wrap; }
+  .clip .tags { font-size:12px; color:#7aa7ff; margin-top:4px; }
+  .clip details { font-size:12px; color:var(--dim); margin-top:6px; }
+  .empty { color:var(--dim); padding:20px; border:1px dashed var(--line); border-radius:12px; text-align:center; }
+  .settings { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:12px; }
+  .settings label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--dim); }
+  .toast { position:fixed; bottom:20px; right:20px; background:#222632; border:1px solid var(--line); padding:10px 16px; border-radius:8px; display:none; max-width:420px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Hype<span>Clipper</span></h1>
+  <div class="small">Watches live chat, clips the hype, writes captions and titles. Free and local.</div>
+  <div class="badges" id="health"></div>
+</header>
+<main>
+  <form class="add" id="addForm">
+    <select id="platform">
+      <option value="twitch">Twitch</option><option value="kick">Kick</option><option value="youtube">YouTube</option>
+    </select>
+    <input id="channel" placeholder="channel name or URL (e.g. xqc, kick.com/adinross, @handle)" size="44" required>
+    <input id="topic" placeholder="game/topic (optional, e.g. GTA 6)">
+    <button class="primary">+ Watch streamer</button>
+  </form>
+
+  <h2>Streamers</h2>
+  <div class="grid" id="streamers"></div>
+
+  <h2>Processing</h2>
+  <div class="jobs" id="jobs"></div>
+
+  <h2>Clips</h2>
+  <div class="clips" id="clips"></div>
+
+  <h2>Settings</h2>
+  <form id="settingsForm">
+    <div class="settings" id="settings"></div>
+    <div style="margin-top:12px"><button class="primary">Save settings</button></div>
+  </form>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.style.display = "block"; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", 4000); }
+async function api(path, opts = {}) {
+  const r = await fetch(path, { headers: {"Content-Type": "application/json"}, ...opts });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || r.statusText);
+  return data;
+}
+
+$("#addForm").onsubmit = async e => {
+  e.preventDefault();
+  try {
+    await api("/api/streamers", { method: "POST", body: JSON.stringify({ channel: $("#channel").value, platform: $("#platform").value, topic: $("#topic").value }) });
+    $("#channel").value = ""; refresh();
+  } catch (err) { toast(err.message); }
+};
+
+const cards = {};
+function cardFor(s) {
+  let el = cards[s.key];
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "card";
+    el.innerHTML = `
+      <div class="row"><span class="dot"></span><span class="name"></span><span class="plat ${esc(s.platform)}">${esc(s.platform)}</span></div>
+      <div class="small status"></div>
+      <div class="meter"><div></div></div>
+      <div class="row small"><span class="speed"></span><span style="margin-left:auto" class="made"></span></div>
+      <canvas width="600" height="92"></canvas>
+      <div class="actions">
+        <button class="clipnow">✂ Clip now</button>
+        <input class="topicIn" placeholder="topic">
+        <label class="toggle"><input type="checkbox" class="auto"> auto</label>
+        <button class="danger remove" title="Stop watching">✕</button>
+      </div>`;
+    el.querySelector(".name").textContent = s.name;
+    el.querySelector(".topicIn").value = s.topic || "";
+    el.querySelector(".clipnow").onclick = async () => { try { await api(`/api/streamers/${s.key}/clip`, {method:"POST"}); toast("Clipping the last 30s + next 10s..."); refresh(); } catch (e) { toast(e.message); } };
+    el.querySelector(".remove").onclick = async () => { if (confirm(`Stop watching ${s.name}?`)) { await api(`/api/streamers/${s.key}`, {method:"DELETE"}); el.remove(); delete cards[s.key]; } };
+    el.querySelector(".auto").onchange = e => api(`/api/streamers/${s.key}`, {method:"PATCH", body: JSON.stringify({auto_clip: e.target.checked})});
+    el.querySelector(".topicIn").onchange = e => api(`/api/streamers/${s.key}`, {method:"PATCH", body: JSON.stringify({topic: e.target.value})});
+    $("#streamers").appendChild(el);
+    cards[s.key] = el;
+  }
+  return el;
+}
+
+function drawGraph(canvas, data, baseline, sens) {
+  const ctx = canvas.getContext("2d"), w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const max = Math.max(1, baseline * sens * 1.3, ...data);
+  const y = v => h - (v / max) * (h - 4) - 2;
+  ctx.strokeStyle = "#ff5c5c66"; ctx.setLineDash([6, 6]); ctx.beginPath(); ctx.moveTo(0, y(baseline * sens)); ctx.lineTo(w, y(baseline * sens)); ctx.stroke();
+  ctx.setLineDash([]); ctx.strokeStyle = "#ffd400"; ctx.lineWidth = 3; ctx.beginPath();
+  data.forEach((v, i) => { const x = (i / Math.max(1, data.length - 1)) * w; i ? ctx.lineTo(x, y(v)) : ctx.moveTo(x, y(v)); });
+  ctx.stroke();
+}
+
+let sensitivity = 2.5;
+async function refresh() {
+  let st; try { st = await api("/api/status"); } catch { return; }
+  const keys = new Set(st.streamers.map(s => s.key));
+  for (const k of Object.keys(cards)) if (!keys.has(k)) { cards[k].remove(); delete cards[k]; }
+  if (!st.streamers.length) $("#streamers").innerHTML = `<div class="empty">Add a streamer above. Tip: add everyone streaming GTA 6, each one runs on its own.</div>`;
+  else $("#streamers").querySelector(".empty")?.remove();
+  for (const s of st.streamers) {
+    const el = cardFor(s);
+    el.classList.toggle("hype", s.in_hype);
+    el.querySelector(".dot").classList.toggle("live", s.live);
+    el.querySelector(".status").textContent = `video: ${s.video_status} · chat: ${s.chat_status}`;
+    el.querySelector(".meter div").style.width = Math.min(100, s.hype_level / sensitivity * 100) + "%";
+    el.querySelector(".speed").textContent = s.warming_up ? `learning normal chat speed... (${s.rate}/s)` :
+      `${s.rate}/s now · ${s.baseline}/s normal · ${s.hype_level}x` + (s.in_hype ? " · HYPE!" : "");
+    el.querySelector(".made").textContent = `${s.clips_made} clips`;
+    el.querySelector(".auto").checked = s.auto_clip;
+    drawGraph(el.querySelector("canvas"), s.graph, s.baseline, sensitivity);
+  }
+  $("#jobs").innerHTML = st.jobs.length ? st.jobs.map(j => `<div class="job ${j.state === "failed" ? "failed" : ""}"><b>${esc(j.streamer)}</b><span class="state">${esc(j.state)}</span><span class="small">score ${esc(j.score)}</span><span class="small">${esc(j.error || "")}</span></div>`).join("")
+    : `<div class="small">Nothing in progress.</div>`;
+  if (st.jobs.map(j => j.id + j.state).join() !== refresh._jobs) { refresh._jobs = st.jobs.map(j => j.id + j.state).join(); loadClips(); }
+}
+
+let clipIds = "";
+async function loadClips() {
+  const clips = await api("/api/clips");
+  const ids = clips.map(c => c.id).join();
+  if (ids === clipIds) return;
+  clipIds = ids;
+  $("#clips").innerHTML = clips.length ? clips.map(c => `
+    <div class="card clip" data-id="${esc(c.id)}">
+      <video src="${esc(c.files.vertical)}" poster="${esc(c.files.thumb)}" controls preload="none"></video>
+      <div class="row small"><span class="plat ${esc(c.platform)}">${esc(c.platform)}</span> ${esc(c.streamer)} · ${esc(c.peak_time)} · ${c.manual ? "manual" : "hype " + esc(c.score) + "x"}</div>
+      <div class="title">${esc(c.title)}</div>
+      <div class="desc">${esc(c.description)}</div>
+      <div class="tags">${esc((c.hashtags || []).join(" "))}</div>
+      <div class="actions">
+        <button class="copy">Copy title + text</button>
+        <a href="${esc(c.files.vertical)}" download="${esc(c.streamer + "_" + c.id)}_9x16.mp4"><button>⬇ 9:16</button></a>
+        <a href="${esc(c.files.wide)}" download="${esc(c.streamer + "_" + c.id)}_16x9.mp4"><button>⬇ 16:9</button></a>
+        <button class="danger del">Delete</button>
+      </div>
+      <details><summary>Transcript & chat</summary><p>${esc(c.transcript || "(no speech)")}</p><p>${esc((c.chat || []).join(" | "))}</p></details>
+    </div>`).join("") : `<div class="empty">No clips yet. They appear here automatically when chat explodes.</div>`;
+  for (const el of document.querySelectorAll(".clip")) {
+    const c = clips.find(x => x.id === el.dataset.id);
+    el.querySelector(".copy").onclick = () => { navigator.clipboard.writeText(`${c.title}\n\n${c.description}\n\n${(c.hashtags || []).join(" ")}`); toast("Copied"); };
+    el.querySelector(".del").onclick = async () => { if (confirm("Delete this clip?")) { await api(`/api/clips/${c.id}`, {method:"DELETE"}); loadClips(); } };
+  }
+}
+
+const SETTINGS = [
+  ["pre_seconds", "Seconds before peak"], ["post_seconds", "Seconds after peak"],
+  ["sensitivity", "Sensitivity (x normal chat speed, lower = more clips)"], ["min_msgs_per_sec", "Min chat speed (msgs/s) to count"],
+  ["cooldown_seconds", "Cooldown between clips (s)"], ["warmup_seconds", "Warm-up (s)"], ["buffer_seconds", "Video buffer (s)"],
+  ["quality", "Recording quality"], ["layout", "Layout", ["blur", "crop"]], ["burn_hook", "Burn hook text on video", ["true", "false"]],
+  ["caption_font", "Caption font"], ["default_topic", "Default game/topic"],
+  ["whisper_model", "Whisper model", ["large-v3-turbo", "medium", "small", "base"]], ["whisper_device", "Whisper device", ["auto", "cuda", "cpu"]],
+  ["ollama_model", "Ollama model"], ["ollama_url", "Ollama URL"],
+  ["kick_pusher_key", "Kick chat key (change only if Kick breaks)"], ["kick_pusher_cluster", "Kick chat cluster"],
+];
+async function loadSettings() {
+  const s = await api("/api/settings");
+  sensitivity = s.sensitivity;
+  $("#settings").innerHTML = SETTINGS.map(([k, label, opts]) => `<label>${esc(label)}${opts
+    ? `<select name="${k}">${opts.map(o => `<option ${String(s[k]) === o ? "selected" : ""}>${o}</option>`).join("")}</select>`
+    : `<input name="${k}" value="${esc(s[k])}">`}</label>`).join("");
+}
+$("#settingsForm").onsubmit = async e => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target).entries());
+  await api("/api/settings", { method: "POST", body: JSON.stringify(body) });
+  await loadSettings(); toast("Settings saved");
+};
+
+async function loadHealth() {
+  const h = await api("/api/health");
+  $("#health").innerHTML = [
+    h.ffmpeg ? `<span class="badge ok">ffmpeg ✓</span>` : `<span class="badge bad">ffmpeg missing</span>`,
+    h.encoder ? `<span class="badge ${h.encoder.includes("nvenc") ? "ok" : ""}">encoder: ${esc(h.encoder)}</span>` : "",
+    h.ollama ? `<span class="badge ok">Ollama ✓ ${esc(h.ollama_models.slice(0, 2).join(", "))}</span>` : `<span class="badge" title="Install Ollama for AI titles. Template titles are used until then.">Ollama off (template titles)</span>`,
+  ].join("");
+}
+
+loadSettings(); loadHealth(); refresh(); loadClips();
+setInterval(refresh, 1500);
+setInterval(loadHealth, 30000);
+</script>
+</body>
+</html>
