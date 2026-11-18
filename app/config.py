@@ -70,6 +70,7 @@ DEFAULTS = {
     # saving and uploading
     "auto_download": False,          # copy every finished clip to the download folder
     "download_folder": "",           # empty = Videos/HypeClipper in your user folder
+    "download_subfolders": "none",   # none | streamer | date | streamer_date
     "download_16x9": False,          # also save the 16:9 version
     "delete_after_download": False,  # remove the clip from the dashboard once it's saved
     "auto_upload_youtube": False,

@@ -119,6 +119,11 @@ Quick switches **⬇ Auto download** and **🗑 Delete after download**:
   Download folder): the 9:16 mp4 and a `.txt` with the title, caption, hashtags and upload links.
 - Delete after download then removes it from the dashboard (after any auto uploads finish).
 - **💾 Save** on a clip card saves one clip by hand.
+- **Change the folder** in Downloads & uploads > Downloads: **📁 Change folder** opens a normal
+  Windows folder window, or type a path (e.g. `D:\Clips\GTA6`) and click **Save path**.
+  **Reset** goes back to `Videos\HypeClipper`. The app checks it can write there first; if the
+  folder later disappears (unplugged drive), it saves to the default folder instead.
+- **Sort into subfolders**: one per streamer, one per day, or streamer \ day.
 
 ### Uploading to YouTube (one-time setup, ~10 minutes, free)
 

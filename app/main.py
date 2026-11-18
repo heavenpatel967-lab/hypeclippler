@@ -280,7 +280,9 @@ def _clip_or_404(clip_id):
 @app.get("/api/publish")
 def publish_status():
     return {**publish.connected(), "queue": publish.pending(),
-            "download_folder": str(publish.download_folder(settings))}
+            "download_folder": str(publish.download_folder(settings)),
+            "download_default": settings["download_folder"].strip() == "",
+            "download_subfolders": settings["download_subfolders"]}
 
 
 @app.post("/api/clips/{clip_id}/save")
@@ -298,6 +300,42 @@ def upload_clip(clip_id: str, platform: str):
         raise HTTPException(400, f"connect {platform} first (Uploads section)")
     publish.enqueue(clip_id, [platform], manual=True)
     return {"ok": True}
+
+
+class Folder(BaseModel):
+    path: str = ""
+
+
+_picker_lock = asyncio.Lock()
+
+
+@app.post("/api/downloads/choose")
+async def choose_download_folder():
+    """Opens a folder picker window on this PC and saves the choice."""
+    if _picker_lock.locked():
+        raise HTTPException(409, "a folder window is already open (check your taskbar)")
+    async with _picker_lock:
+        try:
+            path = await asyncio.to_thread(publish.choose_folder, str(publish.download_folder(settings)))
+        except Exception as e:  # noqa: BLE001 - e.g. Python without tkinter
+            raise HTTPException(500, f"couldn't open the folder window ({e}); type the path instead")
+    if not path:
+        return {"path": str(publish.download_folder(settings)), "changed": False}
+    try:
+        settings.update({"download_folder": publish.check_folder(path)})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"path": str(publish.download_folder(settings)), "changed": True}
+
+
+@app.post("/api/downloads/folder")
+def set_download_folder(body: Folder):
+    """Sets the root download folder from a typed path ('' = back to the default)."""
+    try:
+        settings.update({"download_folder": publish.check_folder(body.path)})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"path": str(publish.download_folder(settings))}
 
 
 @app.post("/api/downloads/open")

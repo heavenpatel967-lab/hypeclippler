@@ -111,7 +111,18 @@
   <div class="grid">
     <div class="card"><b>⬇ Downloads</b>
       <div class="small" id="dlInfo"></div>
-      <div class="actions"><button id="openDl">Open download folder</button></div>
+      <div class="actions">
+        <button id="chooseDl" class="primary">📁 Change folder</button>
+        <button id="openDl">Open folder</button>
+        <button id="resetDl" title="Back to Videos\HypeClipper">Reset</button>
+      </div>
+      <div class="actions">
+        <input id="dlPath" placeholder="or type a path, e.g. D:\Clips\GTA6">
+        <button id="saveDl">Save path</button>
+      </div>
+      <label class="small">Sort into subfolders:
+        <select id="dlSub"><option value="none">no subfolders</option><option value="streamer">one per streamer</option>
+          <option value="date">one per day</option><option value="streamer_date">streamer \ day</option></select></label>
       <div class="small">Auto download saves every finished clip (9:16 mp4 + a .txt with title, caption and hashtags). With "Delete after download" it then disappears from this dashboard. Turn both on in Quick switches.</div>
     </div>
     <div class="card"><b>▶ YouTube</b>
@@ -312,7 +323,7 @@ const SETTINGS = [
   ["keep_low_score", "Keep low-score clips for review", ["true", "false"]], ["always_keep_hype", "Always keep hype above (x)"],
   ["fast_when_queue_over", "Skip AI vision when more clips than this wait"], ["min_unique_chatters", "Min different chatters at the peak"],
   ["smart_trim", "AI picks the best cut", ["true", "false"]],
-  ["download_folder", "Download folder (empty = Videos/HypeClipper)"], ["download_16x9", "Also save 16:9 version", ["true", "false"]],
+  ["download_folder", "Download folder (empty = Videos/HypeClipper)"], ["download_subfolders", "Download subfolders", ["none", "streamer", "date", "streamer_date"]], ["download_16x9", "Also save 16:9 version", ["true", "false"]],
   ["auto_upload_min_score", "Auto-upload only clips scored at least (0-10)"], ["upload_gap_minutes", "Minutes between auto uploads"],
   ["yt_privacy", "YouTube visibility", ["public", "unlisted", "private"]],
   ["low_memory", "Low memory mode (stops WinError 8)", ["true", "false"]], ["min_free_ram_mb", "Wait until this much RAM is free (MB)"],
@@ -377,7 +388,7 @@ $("#settingsForm").onsubmit = async e => {
   await loadSettings(); toast("Settings saved");
 };
 
-const UI_VERSION = "0.12.0";
+const UI_VERSION = "0.13.0";
 async function loadHealth() {
   const h = await api("/api/health");
   $("#restart").style.display = h.version === UI_VERSION ? "none" : "block";
@@ -476,12 +487,24 @@ $("#stopApp").onclick = stopApp;
 
 async function loadPublish() {
   const p = await api("/api/publish");
-  $("#dlInfo").textContent = "Folder: " + p.download_folder;
+  $("#dlInfo").innerHTML = `Saving to: <b>${esc(p.download_folder)}</b>${p.download_default ? " (default)" : ""}`;
+  $("#dlSub").value = p.download_subfolders;
   $("#ytInfo").innerHTML = p.youtube.connected ? `<span style="color:var(--ok)">Connected: ${esc(p.youtube.channel)}</span>`
     : p.youtube.client ? "Client added. Click Connect YouTube." : "Not set up.";
   $("#igInfo").innerHTML = p.instagram.connected ? `<span style="color:var(--ok)">Connected: @${esc(p.instagram.username)}</span>` : "Not connected.";
 }
 $("#openDl").onclick = () => api("/api/downloads/open", {method:"POST"});
+$("#chooseDl").onclick = async () => {
+  toast("A folder window opened on your PC (check the taskbar if you don't see it)");
+  try { const r = await api("/api/downloads/choose", {method:"POST"}); if (r.changed) toast("Download folder: " + r.path); loadPublish(); loadSettings(); }
+  catch (e) { toast(e.message); }
+};
+$("#saveDl").onclick = async () => {
+  try { const r = await api("/api/downloads/folder", {method:"POST", body: JSON.stringify({path: $("#dlPath").value})}); $("#dlPath").value = ""; toast("Download folder: " + r.path); loadPublish(); loadSettings(); }
+  catch (e) { toast(e.message); }
+};
+$("#resetDl").onclick = async () => { const r = await api("/api/downloads/folder", {method:"POST", body: JSON.stringify({path: ""})}); toast("Back to default: " + r.path); loadPublish(); loadSettings(); };
+$("#dlSub").onchange = async e => { await api("/api/settings", {method:"POST", body: JSON.stringify({download_subfolders: e.target.value})}); toast("Saved"); };
 $("#ytFile").onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
   try { await api("/api/youtube/client", {method:"POST", body: JSON.stringify({data: JSON.parse(await f.text())})}); toast("Google client added. Now click Connect YouTube."); loadPublish(); }
