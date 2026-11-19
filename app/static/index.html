@@ -534,7 +534,9 @@ async function loadPublish() {
   const p = await api("/api/publish");
   $("#dlInfo").innerHTML = `Saving to: <b>${esc(p.download_folder)}</b>${p.download_default ? " (default)" : ""}`;
   $("#dlSub").value = p.download_subfolders;
-  $("#ytInfo").innerHTML = p.youtube.connected ? `<span style="color:var(--ok)">Connected: ${esc(p.youtube.channel)}</span>`
+  $("#ytInfo").innerHTML = p.youtube.connected
+    ? `<span style="color:var(--ok)">Connected: ${esc(p.youtube.channel)}</span>${p.youtube.email ? ` <span class="small">(${esc(p.youtube.email)})</span>` : ""}`
+    : p.youtube.signed_in ? `<span style="color:var(--bad)">Signed in as ${esc(p.youtube.email || "an account")} but it has no YouTube channel.</span> Click Disconnect, then Connect YouTube and choose the account/channel that owns your channel.`
     : p.youtube.client ? "Client added. Click Connect YouTube." : "Not set up.";
   $("#igInfo").innerHTML = p.instagram.connected ? `<span style="color:var(--ok)">Connected: @${esc(p.instagram.username)}</span>` : "Not connected.";
 }
