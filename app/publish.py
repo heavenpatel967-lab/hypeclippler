@@ -28,7 +28,9 @@ log = logging.getLogger("publish")
 YT_CLIENT = DATA / "youtube_client.json"
 YT_TOKEN = DATA / "youtube_token.json"
 IG_TOKEN = DATA / "instagram_token.json"
-YT_SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
+YT_SCOPES = ("openid email https://www.googleapis.com/auth/youtube.upload "
+             "https://www.googleapis.com/auth/youtube.readonly")
+NO_CHANNEL = "(no channel on this account)"
 IG_API = "https://graph.instagram.com"
 
 _q: "queue.Queue[tuple]" = queue.Queue()
@@ -341,7 +343,7 @@ def yt_auth_url(settings):
     _oauth_states[state] = time.time()
     return "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode({
         "client_id": client[0], "redirect_uri": yt_redirect(settings), "response_type": "code",
-        "scope": YT_SCOPES, "access_type": "offline", "prompt": "consent", "state": state})
+        "scope": YT_SCOPES, "access_type": "offline", "prompt": "select_account consent", "state": state})  # always pick the account
 
 
 def yt_finish(settings, code, state):
@@ -360,7 +362,10 @@ def yt_finish(settings, code, state):
     tok["expires_at"] = time.time() + tok.get("expires_in", 3600) - 60
     _write(YT_TOKEN, tok)
     tok["channel"] = _yt_channel(tok["access_token"])
+    tok["email"] = _id_email(tok.get("id_token"))
     _write(YT_TOKEN, tok)
+    if tok["channel"] == NO_CHANNEL:
+        return f"{NO_CHANNEL}: signed in as {tok['email'] or 'unknown account'}"
     return tok["channel"]
 
 
@@ -384,17 +389,32 @@ def _yt_access():
     return tok["access_token"]
 
 
+def _id_email(id_token):
+    """Email of the Google account that signed in (only for showing it)."""
+    import base64
+    try:
+        payload = id_token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        return json.loads(base64.urlsafe_b64decode(payload)).get("email")
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _yt_channel(access):
     try:
         r = httpx.get("https://www.googleapis.com/youtube/v3/channels", timeout=20,
                       params={"part": "snippet", "mine": "true"}, headers={"Authorization": f"Bearer {access}"})
         items = r.json().get("items") or []
-        return items[0]["snippet"]["title"] if items else "(no channel on this account)"
+        return items[0]["snippet"]["title"] if items else NO_CHANNEL
     except Exception:  # noqa: BLE001
         return "?"
 
 
 def yt_upload(clip_id, settings):
+    tok = _read(YT_TOKEN) or {}
+    if tok.get("channel") == NO_CHANNEL:
+        raise RuntimeError(f"the connected Google account ({tok.get('email') or '?'}) has no YouTube channel: "
+                           "Disconnect and connect again, choosing your channel")
     meta = load_meta(clip_id)
     path = CLIPS / clip_id / "clip_9x16.mp4"
     title = (title_text(meta, settings) or meta.get("title") or "Stream moment").replace("<", "").replace(">", "")
@@ -520,7 +540,9 @@ UPLOADERS = {"youtube": yt_upload, "instagram": ig_upload}
 
 def connected():
     yt, ig = _read(YT_TOKEN), _read(IG_TOKEN)
-    return {"youtube": {"client": bool(yt_client()), "connected": bool(yt), "channel": (yt or {}).get("channel")},
+    has_channel = bool(yt) and yt.get("channel") != NO_CHANNEL
+    return {"youtube": {"client": bool(yt_client()), "connected": has_channel, "signed_in": bool(yt),
+                        "channel": (yt or {}).get("channel"), "email": (yt or {}).get("email")},
             "instagram": {"connected": bool(ig), "username": (ig or {}).get("username")}}
 
 
