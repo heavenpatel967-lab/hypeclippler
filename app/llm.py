@@ -46,6 +46,61 @@ def _capabilities(settings, model):
         return set()
 
 
+_start = {"at": 0.0, "msg": None}
+
+
+def ollama_exe():
+    import os
+    import shutil
+    from pathlib import Path
+    found = shutil.which("ollama")
+    if found:
+        return found
+    for base in (os.environ.get("LOCALAPPDATA"), os.environ.get("ProgramFiles")):
+        if base:
+            p = Path(base) / ("Programs/Ollama/ollama.exe" if base == os.environ.get("LOCALAPPDATA") else "Ollama/ollama.exe")
+            if p.exists():
+                return str(p)
+    return None
+
+
+def ensure_running(settings):
+    """Starts 'ollama serve' in the background if Ollama isn't running (e.g. after a PC restart).
+    Tried at most every 2 minutes. Returns True when Ollama answers."""
+    import os
+    import subprocess
+    base = _base(settings)
+    if not any(h in base for h in ("localhost", "127.0.0.1")):
+        return False  # Ollama on another PC: can't start it from here
+    if time.time() - _start["at"] < 120:
+        return False
+    _start["at"] = time.time()
+    exe = ollama_exe()
+    if not exe:
+        _start["msg"] = "Ollama is not installed (get it from ollama.com)"
+        return False
+    flags = 0
+    if os.name == "nt":
+        flags = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    try:
+        subprocess.Popen([exe, "serve"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, creationflags=flags, close_fds=True)
+    except OSError as e:
+        _start["msg"] = f"couldn't start Ollama: {e}"
+        return False
+    log.info("Ollama wasn't running, started it")
+    for _ in range(20):
+        time.sleep(1)
+        try:
+            if httpx.get(base + "/api/tags", timeout=2).status_code == 200:
+                _start["msg"] = None
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+    _start["msg"] = "started Ollama but it didn't answer"
+    return False
+
+
 def resolve(settings, force=False):
     """{"model", "vision", "thinking", "installed", "error"} for the model to use."""
     wanted = settings["ollama_model"].strip()
@@ -80,7 +135,9 @@ def resolve(settings, force=False):
                 caps = _capabilities(settings, chosen)
                 info.update(model=chosen, vision="vision" in caps, thinking="thinking" in caps)
         except Exception as e:  # noqa: BLE001
-            info["error"] = f"Ollama is not running ({type(e).__name__})"
+            info["error"] = _start["msg"] or f"Ollama is not running ({type(e).__name__}), starting it..."
+            if ensure_running(settings):
+                _cache["at"] = 0.0  # started: look again on the next call
         _cache.update(at=time.time(), url=settings["ollama_url"], wanted=wanted, info=info)
         return info
 

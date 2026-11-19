@@ -95,11 +95,40 @@ def commit_info():
         return None, None
 
 
+def _page_file_setting():
+    """Reads Windows' page file setting. Returns "auto", a custom max size in MB, 0 (none)
+    or None if unknown."""
+    if os.name != "nt":
+        return None
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                             r"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management")
+        value, _ = winreg.QueryValueEx(key, "PagingFiles")
+        entries = value if isinstance(value, list) else [value]
+        total = 0
+        for e in entries:
+            parts = e.strip().split()
+            if not parts:
+                continue
+            if parts[0].startswith("?:") or len(parts) == 1 or parts[1:3] == ["0", "0"]:
+                return "auto"  # "Automatically manage" or "System managed size"
+            total += int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 0
+        return total
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def page_file_small():
-    """True when the page file adds less than 16 GB on top of RAM (too little for
-    several recordings + Whisper + an AI model)."""
+    """True when Windows can't give enough memory: no page file or a small fixed one.
+    A Windows-managed page file grows when needed, so that's fine even while it's small."""
+    setting = _page_file_setting()
+    if setting == "auto":
+        return False
+    if isinstance(setting, int):
+        return setting < 16 * 1024
     limit, phys = commit_info()
-    return bool(limit and phys and limit - phys < 16 * 1024)
+    return bool(limit and phys and limit - phys < 8 * 1024)
 
 
 def wait_until_runnable(name, on_wait=None, max_wait=1800):
