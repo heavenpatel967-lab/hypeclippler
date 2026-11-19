@@ -60,6 +60,7 @@ class StreamerWorker:
         self.auto_clip = auto_clip
         self.show_chat = show_chat  # draw the live chat box under the video in clips
         self.facecam = facecam      # webcam box [x, y, w, h] (0-1) for the facecam layout
+        self.handles = {}           # {"instagram": "@x", "youtube": "@x"} for mentions in uploads
         self.detector = HypeDetector(settings)
         self.chat_status = "starting"
         self.video_status = "starting"
@@ -158,7 +159,7 @@ class StreamerWorker:
 
     def info(self):
         return {"key": self.key, "platform": self.platform, "channel": self.channel, "name": self.channel_name,
-                "topic": self.topic, "auto_clip": self.auto_clip, "show_chat": self.show_chat, "facecam": self.facecam, "chat_status": self.chat_status,
+                "topic": self.topic, "auto_clip": self.auto_clip, "show_chat": self.show_chat, "facecam": self.facecam, "handles": self.handles, "chat_status": self.chat_status,
                 "video_status": self.video_status, "live": self.recorder.live, "clips_made": self.clips_made,
                 "video_gaps": self.recorder.gaps() if self.recorder.live else 0,
                 "skipped": [{**m, "can_clip": self.can_rescue(m)} for m in reversed(self.skipped)],
@@ -167,7 +168,7 @@ class StreamerWorker:
 
     def config(self):
         return {"platform": self.platform, "channel": self.channel, "topic": self.topic, "auto_clip": self.auto_clip,
-                "show_chat": self.show_chat, "facecam": self.facecam}
+                "show_chat": self.show_chat, "facecam": self.facecam, "handles": self.handles}
 
 
 class Manager:
@@ -179,12 +180,13 @@ class Manager:
         for s in self.settings["streamers"]:
             try:
                 await self.add(s["channel"], s.get("platform"), s.get("topic", ""), s.get("auto_clip", True),
-                               s.get("show_chat", False), s.get("facecam"),
+                               s.get("show_chat", False), s.get("facecam"), handles=s.get("handles"),
                                save=False)
             except Exception as e:  # noqa: BLE001
                 log.warning("could not start %s: %s", s, e)
 
-    async def add(self, channel, platform=None, topic="", auto_clip=True, show_chat=False, facecam=None, save=True):
+    async def add(self, channel, platform=None, topic="", auto_clip=True, show_chat=False, facecam=None, save=True,
+                  handles=None):
         platform, channel = parse_channel(channel, platform)
         if platform not in READERS:
             raise ValueError(f"unknown platform {platform}")
@@ -193,6 +195,7 @@ class Manager:
             raise ValueError("already watching this streamer")
         w = StreamerWorker(platform, channel, self.settings, topic, auto_clip, show_chat, facecam)
         w.recorder.count_streamers = lambda: len(self.workers)
+        w.handles = dict(handles or {})
         self.workers[key] = w
         w.start()
         log.info("Watching %s on %s", w.channel_name, platform)
@@ -217,6 +220,11 @@ class Manager:
             w.show_chat = bool(show_chat)
         if facecam is not False:  # None clears it
             w.facecam = facecam
+        self._save()
+
+    def set_handles(self, key, handles):
+        w = self.workers[key]
+        w.handles = {k: v.strip().lstrip("@")[:60] for k, v in handles.items() if k in ("instagram", "youtube") and v}
         self._save()
 
     def _save(self):
