@@ -158,6 +158,21 @@ The app doesn't need Meta's app review for your own account. Instagram allows 50
 24 hours. Uploads go directly from your PC (resumable upload); if Instagram rejects one, the
 error shows on the clip card and you can post it by hand from the download folder.
 
+### Branding: same thumbnail, title and description on every upload
+
+Dashboard > **Branding**:
+- **Thumbnail / cover**: upload your image once. Every Short and Reel uses it (wide images are
+  fitted on a blurred 9:16 background). Optional: write each clip's headline on it.
+  - YouTube: set with the API after upload. Needs a phone-verified channel
+    (youtube.com/verify). YouTube may still show a video frame in the Shorts feed; your image
+    shows on the channel page and in search.
+  - Instagram: the API only takes covers from public web links, so the image is placed on the
+    first 0.2 s of the Reel and picked as the cover frame.
+- **Title & description template** with placeholders like `{headline}`, `{streamer_mention}`,
+  `{stream_link}`, `{hashtags}`. Save & preview shows the result.
+- **@ tags** on a streamer's card: their Instagram/YouTube handles, used as `{streamer_mention}`.
+- Extra hashtags and your own mentions added to every post.
+
 ### Automatic uploads
 
 **▶ Auto YouTube** / **📷 Auto Instagram** upload new clips automatically when:
@@ -288,7 +303,13 @@ The header shows free RAM and the internet speed all recordings need. If a card 
 "⚠ video dropped", that recording is missing pieces (choppy clips): your internet or PC can't keep
 up, so watch fewer streamers.
 
-If it still happens: let Windows manage the page file size (Settings > System > About > Advanced
+If it still happens, double-click **`fix_memory.bat`** once (click Yes), then restart the PC. It
+turns on "Automatically manage paging file size", so Windows can grow the page file instead of
+refusing to start programs. The dashboard shows an orange bar when the page file is too small.
+When memory runs out anyway, the app now frees Whisper and the AI model and waits up to 30
+minutes for room instead of failing the clip.
+
+Manual way: let Windows manage the page file size (Settings > System > About > Advanced
 system settings > Performance > Advanced > Virtual memory > "Automatically manage"), close
 other heavy apps, or set Whisper model to `small`.
 

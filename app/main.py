@@ -36,6 +36,11 @@ async def lifespan(_app):
     loop.run_in_executor(None, tools.video_encoder)  # warm up the check
     loop.run_in_executor(None, sfx.ensure_library)   # built-in sound effects + sfx folders
     publish.start(settings)
+    from . import captions
+    resources.register_freer(captions.unload)
+    resources.register_freer(lambda: llm.unload(settings))
+    if resources.page_file_small():
+        log.warning("Windows page file is small: this causes WinError 8. Run fix_memory.bat once.")
     await manager.start()
     yield
     await manager.shutdown()
@@ -148,6 +153,8 @@ async def health():
     free, total = resources.memory_mb()
     workers = list(manager.workers.values())
     hi = sum(1 for w in workers if w.recorder.quality().startswith("1080"))
+    limit, phys = resources.commit_info()
+    out.update(page_file_small=resources.page_file_small(), commit_limit_mb=limit)
     out.update(ram_free_mb=free, ram_total_mb=total, streamers=len(workers),
                bandwidth_mbps=hi * 7 + (len(workers) - hi) * 4)
     info = await asyncio.to_thread(llm.resolve, settings)
@@ -279,7 +286,7 @@ def _clip_or_404(clip_id):
 
 @app.get("/api/publish")
 def publish_status():
-    return {**publish.connected(), "queue": publish.pending(),
+    return {**publish.connected(), "queue": publish.pending(), "cover": bool(publish.cover_source()),
             "download_folder": str(publish.download_folder(settings)),
             "download_default": settings["download_folder"].strip() == "",
             "download_subfolders": settings["download_subfolders"]}
@@ -427,3 +434,64 @@ def approve_clip(clip_id: str):
     publish.on_clip_ready({**meta, "clip_score": max(meta.get("clip_score") or 0, settings["auto_upload_min_score"])},
                           settings)
     return {"ok": True}
+
+
+# ------------------------------------------------------------------ branding
+class Handles(BaseModel):
+    instagram: str = ""
+    youtube: str = ""
+
+
+class Templates(BaseModel):
+    title_template: str
+    description_template: str
+    extra_hashtags: str = ""
+    extra_mentions: str = ""
+
+
+@app.post("/api/streamers/{key}/handles")
+def set_handles(key: str, body: Handles):
+    if key not in manager.workers:
+        raise HTTPException(404, "not found")
+    manager.set_handles(key, body.model_dump())
+    return manager.workers[key].info()
+
+
+@app.post("/api/cover")
+async def upload_cover(request: Request, name: str = "cover.png"):
+    data = await request.body()
+    try:
+        await asyncio.to_thread(publish.save_cover, data, name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True}
+
+
+@app.get("/api/cover/preview")
+def cover_preview(headline: str = ""):
+    if not publish.cover_source():
+        raise HTTPException(404, "no cover image uploaded")
+    out = publish.DATA / "cover_preview.jpg"
+    try:
+        publish.make_cover(out, headline or "xQc thinks GTA 6 looks like real life", settings)
+    except RuntimeError as e:
+        raise HTTPException(500, str(e)[:200])
+    return FileResponse(out, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.delete("/api/cover")
+def delete_cover():
+    for f in publish.DATA.glob("cover_source.*"):
+        f.unlink()
+    return {"ok": True}
+
+
+@app.post("/api/templates")
+def save_templates(body: Templates):
+    settings.update(body.model_dump())
+    sample = {"streamer": "xqc", "platform": "kick", "channel": "xqc", "title": "xQc can't believe GTA 6 is real",
+              "headline": "xQc thinks GTA 6 looks like real life", "description": "He couldn't stop staring.",
+              "hashtags": ["#xqc"], "handles": {"instagram": "xqc", "youtube": "xqcow"}}
+    return {"youtube_title": publish.title_text(sample, settings),
+            "youtube_description": publish.caption_text(sample, settings, "youtube", 4900),
+            "instagram_caption": publish.caption_text(sample, settings, "instagram")}

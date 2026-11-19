@@ -82,6 +82,9 @@
   <div class="badges" id="health"></div>
   <button class="danger" id="stopApp" title="Stops all recordings and closes HypeClipper">⏻ Stop app</button>
 </header>
+<div id="pagefile" style="display:none;background:#ff9f1c;color:#000;font-weight:600;padding:10px 24px;text-align:center">
+  Windows' page file is too small for HypeClipper. This is what causes "WinError 8 / not enough memory".
+  Fix it once: double-click <b>fix_memory.bat</b> in the HypeClipper folder, click Yes, then restart your PC.</div>
 <main>
   <div class="quick" id="quick"></div>
   <form class="add" id="addForm">
@@ -138,6 +141,27 @@
     </div>
   </div>
 
+  <h2>Branding (thumbnail, title, description)</h2>
+  <div class="grid">
+    <div class="card"><b>🖼 Thumbnail / cover</b>
+      <div class="small">The same image on every YouTube Short and Instagram Reel. Wide images are fitted on a blurred 9:16 background.</div>
+      <img id="coverImg" style="width:160px;border-radius:8px;margin:8px 0;display:none" alt="cover preview">
+      <div class="actions"><label class="up">Upload image<input type="file" id="coverFile" accept="image/png,image/jpeg,image/webp" hidden></label>
+        <button id="coverDel" class="danger">Remove</button></div>
+      <label class="toggle"><input type="checkbox" id="coverOn"> use as thumbnail</label>
+      <label class="toggle"><input type="checkbox" id="coverHead"> write the clip's headline on it</label>
+    </div>
+    <div class="card" style="grid-column: span 2"><b>📝 Title & description template</b>
+      <div class="small">Placeholders: {title} {headline} {description} {streamer} {streamer_mention} {platform} {stream_link} {game} {extra_mentions} {hashtags}. {streamer_mention} is the streamer's @handle from "@ tags" on their card.</div>
+      <label class="small">YouTube title <input id="tplTitle" style="width:100%"></label>
+      <label class="small">Description / caption <textarea id="tplDesc" rows="6" style="width:100%"></textarea></label>
+      <div class="row"><label class="small" style="flex:1">Extra hashtags <input id="tplTags" style="width:100%"></label>
+        <label class="small" style="flex:1">Your mentions on every post <input id="tplMent" placeholder="@rockstargames" style="width:100%"></label></div>
+      <div class="actions"><button id="tplSave" class="primary">Save & preview</button></div>
+      <pre id="tplPrev" class="small" style="white-space:pre-wrap;background:#0b0c10;padding:8px;border-radius:8px;display:none"></pre>
+    </div>
+  </div>
+
   <h2>Sound effects</h2>
   <div class="small" style="margin-bottom:10px">Each folder is a type of sound. The app picks sounds that fit the moment (fails get FAHHH, emotional damage, sad violin; shocks get vine boom, taco bell, metal pipe; laughs get laugh sounds...). Add sounds by uploading a file or pasting a link: a direct .mp3 link or a sound page like myinstants.com. Your sounds replace the built-in one in that folder.</div>
   <div class="grid" id="sounds"></div>
@@ -150,6 +174,7 @@
   </form>
 </main>
 <div class="toast" id="toast"></div>
+
 <div class="modal" id="camModal"><div class="box">
   <b id="camTitle">Webcam box</b>
   <div class="small">Drag a rectangle around the streamer's webcam. Clips then use the facecam layout: webcam on top, gameplay below.</div>
@@ -196,6 +221,7 @@ function cardFor(s) {
         <label class="toggle"><input type="checkbox" class="auto"> auto</label>
         <label class="toggle" title="Show live chat under the video in clips"><input type="checkbox" class="chatIn"> chat</label>
         <button class="cam" title="Mark where the webcam is, for the facecam layout">🎥 webcam</button>
+        <button class="tags" title="Streamer's Instagram / YouTube @handles, mentioned in uploads">@ tags</button>
         <button class="danger remove" title="Stop watching">✕</button>
       </div>`;
     el.querySelector(".name").textContent = s.name;
@@ -204,6 +230,12 @@ function cardFor(s) {
     el.querySelector(".remove").onclick = async () => { if (confirm(`Stop watching ${s.name}?`)) { await api(`/api/streamers/${s.key}`, {method:"DELETE"}); el.remove(); delete cards[s.key]; } };
     el.querySelector(".auto").onchange = e => api(`/api/streamers/${s.key}`, {method:"PATCH", body: JSON.stringify({auto_clip: e.target.checked})});
     el.querySelector(".cam").onclick = () => openCamPicker(s.key, s.name);
+    el.querySelector(".tags").onclick = async () => {
+      const cur = ((window._lastStatus || []).find(x => x.key === s.key) || {}).handles || {};
+      const ig = prompt(`${s.name}'s Instagram @handle (empty = none)`, cur.instagram || ""); if (ig === null) return;
+      const yt = prompt(`${s.name}'s YouTube @handle (empty = none)`, cur.youtube || ""); if (yt === null) return;
+      await api(`/api/streamers/${s.key}/handles`, {method: "POST", body: JSON.stringify({instagram: ig, youtube: yt})}); toast("Saved"); refresh();
+    };
     el.querySelector(".chatIn").onchange = e => api(`/api/streamers/${s.key}`, {method:"PATCH", body: JSON.stringify({show_chat: e.target.checked})});
     el.querySelector(".topicIn").onchange = e => api(`/api/streamers/${s.key}`, {method:"PATCH", body: JSON.stringify({topic: e.target.value})});
     $("#streamers").appendChild(el);
@@ -244,6 +276,7 @@ async function refresh() {
     el.querySelector(".auto").checked = s.auto_clip;
     el.querySelector(".chatIn").checked = s.show_chat;
     el.querySelector(".cam").textContent = s.facecam ? "🎥 webcam ✓" : "🎥 webcam";
+    el.querySelector(".tags").textContent = Object.keys(s.handles || {}).length ? "@ tags ✓" : "@ tags";
     drawGraph(el.querySelector("canvas"), s.graph, s.baseline, sensitivity);
   }
   const skipped = st.streamers.flatMap(s => (s.skipped || []).map(m => ({...m, key: s.key, name: s.name})))
@@ -347,6 +380,7 @@ const QUICK = [
   ["auto_upload_youtube", "▶ Auto YouTube"], ["auto_upload_instagram", "📷 Auto Instagram"],
 ];
 const EFFECTS = ["sfx_enabled", "sfx_intro_whoosh", "zoom_punch"];
+const AUTO = ["auto_download", "auto_upload_youtube", "auto_upload_instagram"];
 const REELS = {layout: "facecam", auto_facecam: true, no_facecam_layout: "crop", caption_mode: "title",
   top_caption_style: "tiktok", burn_hook: true, word_captions: false, chat_box_enabled: false,
   sfx_enabled: false, sfx_intro_whoosh: false, zoom_punch: false, output_fps: 30, quality: "auto"};
@@ -356,6 +390,7 @@ function renderQuick(s) {
   $("#quick").innerHTML = `<span class="lbl">Quick switches</span>
     <button class="pill mode ${clean ? "active" : ""}" data-mode="clean" title="No sound effects, no whoosh, no zoom: just the real moment and reactions">🎯 Clean mode (no effects)</button>
     <button class="pill mode ${!clean && EFFECTS.every(k => s[k]) ? "active" : ""}" data-mode="full" title="Sound effects, whoosh and zoom punches on">✨ Full edit</button>
+    <button class="pill mode ${AUTO.every(k => s[k]) ? "active" : ""}" data-mode="auto" title="Auto download + auto YouTube + auto Instagram">🤖 Auto mode</button>
     <button class="pill mode ${isReels(s) ? "active" : ""}" data-mode="reels" title="Webcam on top, gameplay below, one headline in the middle, no chat box, no word captions, no effects">🎬 Reels style</button>
     ` + QUICK.map(([k, label]) => `<button class="pill ${s[k] ? "on" : "off"}" data-key="${k}">${label}</button>`).join("") +
     `<span class="small">${s.min_clip_seconds}-${s.max_clip_seconds} s clips · applies to new clips</span>`;
@@ -363,6 +398,12 @@ function renderQuick(s) {
     await api("/api/settings", {method: "POST", body: JSON.stringify({[b.dataset.key]: !s[b.dataset.key]})}); loadSettings();
   });
   $("#quick").querySelectorAll("[data-mode]").forEach(b => b.onclick = async () => {
+    if (b.dataset.mode === "auto") {
+      const on = !AUTO.every(k => s[k]);
+      if (on && !confirm("Auto mode: every clip scored " + s.auto_upload_min_score + "/10+ is uploaded to YouTube and Instagram by itself, one every " + s.upload_gap_minutes + " min. Turn on?")) return;
+      await api("/api/settings", {method: "POST", body: JSON.stringify(Object.fromEntries(AUTO.map(k => [k, on])))});
+      toast(on ? "Auto mode ON" : "Auto mode OFF"); return loadSettings();
+    }
     if (b.dataset.mode === "reels") {
       await api("/api/settings", {method: "POST", body: JSON.stringify(REELS)});
       toast("Reels style: webcam top, gameplay bottom, one headline, no effects"); return loadSettings();
@@ -388,10 +429,11 @@ $("#settingsForm").onsubmit = async e => {
   await loadSettings(); toast("Settings saved");
 };
 
-const UI_VERSION = "0.13.0";
+const UI_VERSION = "0.15.0";
 async function loadHealth() {
   const h = await api("/api/health");
   $("#restart").style.display = h.version === UI_VERSION ? "none" : "block";
+  $("#pagefile").style.display = h.page_file_small ? "block" : "none";
   $("#health").innerHTML = [
     h.ram_free_mb != null ? `<span class="badge ${h.ram_free_mb < 3000 ? "bad" : "ok"}" title="Free memory. Below 3 GB, clips wait instead of crashing. Close Chrome tabs or watch fewer streamers.">RAM free: ${(h.ram_free_mb / 1024).toFixed(1)} / ${(h.ram_total_mb / 1024).toFixed(0)} GB</span>` : "",
     h.streamers ? `<span class="badge" title="Estimated download speed needed for all recordings">${h.streamers} streamers ≈ ${h.bandwidth_mbps} Mbps</span>` : "",
@@ -517,6 +559,31 @@ $("#igSave").onclick = async () => {
   catch (e) { toast(e.message); }
 };
 $("#igOff").onclick = async () => { await api("/api/instagram/disconnect", {method:"POST"}); loadPublish(); };
+async function loadBranding() {
+  const s = await api("/api/settings"), p = await api("/api/publish");
+  $("#tplTitle").value = s.title_template; $("#tplDesc").value = s.description_template;
+  $("#tplTags").value = s.extra_hashtags; $("#tplMent").value = s.extra_mentions;
+  $("#coverOn").checked = s.cover_enabled; $("#coverHead").checked = s.cover_headline;
+  $("#coverImg").style.display = p.cover ? "block" : "none";
+  if (p.cover) $("#coverImg").src = "/api/cover/preview?t=" + Date.now();
+}
+$("#coverFile").onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = await fetch(`/api/cover?name=${encodeURIComponent(f.name)}`, {method: "POST", body: f});
+  const d = await r.json(); if (!r.ok) return toast(d.detail || "upload failed");
+  toast("Cover saved"); loadBranding();
+};
+$("#coverDel").onclick = async () => { await api("/api/cover", {method: "DELETE"}); loadBranding(); };
+$("#coverOn").onchange = e => api("/api/settings", {method: "POST", body: JSON.stringify({cover_enabled: e.target.checked})});
+$("#coverHead").onchange = async e => { await api("/api/settings", {method: "POST", body: JSON.stringify({cover_headline: e.target.checked})}); loadBranding(); };
+$("#tplSave").onclick = async () => {
+  const r = await api("/api/templates", {method: "POST", body: JSON.stringify({title_template: $("#tplTitle").value,
+    description_template: $("#tplDesc").value, extra_hashtags: $("#tplTags").value, extra_mentions: $("#tplMent").value})});
+  $("#tplPrev").style.display = "block";
+  $("#tplPrev").textContent = `YOUTUBE TITLE:\n${r.youtube_title}\n\nYOUTUBE DESCRIPTION:\n${r.youtube_description}\n\nINSTAGRAM CAPTION:\n${r.instagram_caption}`;
+  toast("Saved");
+};
+loadBranding();
 loadPublish(); setInterval(loadPublish, 30000); setInterval(() => { // refresh upload progress, but never while you're watching a clip
   if ([...document.querySelectorAll(".clip video")].some(v => !v.paused)) return;
   clipIds = ""; loadClips(); }, 15000); $("#stopOld").onclick = stopApp;

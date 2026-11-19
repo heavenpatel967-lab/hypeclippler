@@ -78,6 +78,14 @@ DEFAULTS = {
     "auto_upload_min_score": 7,      # only clips the AI scored this high are uploaded automatically
     "upload_gap_minutes": 20,        # minimum time between two automatic uploads per platform
     "yt_privacy": "public",          # public | unlisted | private
+    # branding for uploads ({title} {headline} {description} {streamer} {streamer_mention}
+    # {platform} {stream_link} {game} {extra_mentions} {hashtags})
+    "title_template": "{title}",
+    "description_template": "{headline}\n\n{description}\n\n🎮 {streamer_mention} live on {platform}: {stream_link}\n{extra_mentions}\n\n{hashtags}",
+    "extra_hashtags": "#gta6 #gtavi #shorts",
+    "extra_mentions": "",            # your own tags on every upload, e.g. @rockstargames
+    "cover_enabled": True,           # use your cover image as thumbnail (when one is uploaded)
+    "cover_headline": False,         # write the clip's headline on the cover
     # web dashboard
     "host": "127.0.0.1",
     "port": 8000,

@@ -345,6 +345,9 @@ def _process(job_id, streamer, moment, settings, manual, force=False):
             "created": time.time(),
             "streamer": streamer.channel_name,
             "platform": streamer.platform,
+            "channel": streamer.channel,
+            "handles": dict(getattr(streamer, "handles", {}) or {}),
+            "topic": streamer.topic or settings["default_topic"],
             "peak_time": datetime.fromtimestamp(moment["peak_ts"]).strftime("%Y-%m-%d %H:%M:%S"),
             "score": moment.get("score"),
             "clip_score": score,
@@ -377,7 +380,15 @@ def _process(job_id, streamer, moment, settings, manual, force=False):
         publish.on_clip_ready(meta, settings)
     except Exception as e:  # noqa: BLE001
         log.exception("clip %s failed", job_id)
-        _set(job_id, state="failed", error=str(e)[:300], ended=time.time())
+        err = str(e)[:300]
+        if resources.is_oom(e):
+            err = ("PC stayed out of memory for 30 minutes. Run fix_memory.bat once (bigger page file), "
+                   "watch fewer streamers or close Chrome tabs.")
+            try:
+                streamer.record_skip(moment, "out of memory")
+            except Exception:  # noqa: BLE001
+                pass
+        _set(job_id, state="failed", error=err, ended=time.time())
         for f in out_dir.glob("*"):
             f.unlink(missing_ok=True)
         try:

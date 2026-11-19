@@ -79,10 +79,146 @@ def clip_status(clip_id):
         return dict(_status.get(clip_id, {}))
 
 
-def caption_text(meta, limit=2200):
-    tags = " ".join(meta.get("hashtags") or [])
-    credit = f"🎮 Streamer: {meta['streamer']} (watch live on {meta['platform'].title()})"
-    return f"{meta.get('headline') or meta['title']}\n\n{meta.get('description', '')}\n\n{credit}\n\n{tags}"[:limit]
+class _Safe(dict):
+    def __missing__(self, key):  # unknown {placeholder} stays as typed
+        return "{" + key + "}"
+
+
+def _handle(h):
+    h = (h or "").strip().lstrip("@")
+    return f"@{h}" if h else ""
+
+
+def stream_link(meta):
+    p, c = meta.get("platform"), meta.get("channel") or meta.get("streamer", "")
+    if p == "twitch":
+        return f"https://twitch.tv/{c}"
+    if p == "kick":
+        return f"https://kick.com/{c}"
+    return c if str(c).startswith("http") else ""
+
+
+def _fields(meta, settings, platform):
+    handles = meta.get("handles") or {}
+    mention = _handle(handles.get(platform)) or meta["streamer"]
+    tags = []
+    for t in (meta.get("hashtags") or []) + settings["extra_hashtags"].split():
+        t = t if t.startswith("#") else "#" + t
+        if t.lower() not in [x.lower() for x in tags]:
+            tags.append(t)
+    return _Safe(title=meta.get("title", ""), headline=meta.get("headline") or meta.get("title", ""),
+                 description=meta.get("description", ""), streamer=meta["streamer"], streamer_mention=mention,
+                 platform=meta["platform"].title(), stream_link=stream_link(meta),
+                 game=meta.get("topic") or settings["default_topic"],
+                 extra_mentions=" ".join(_handle(h) for h in settings["extra_mentions"].replace(",", " ").split()),
+                 hashtags=" ".join(tags[:15]))
+
+
+def _render(template, fields, fallback):
+    try:
+        text = template.replace("\\n", "\n").format_map(fields)
+    except (ValueError, IndexError):  # a broken template never stops an upload
+        text = fallback.format_map(fields)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def caption_text(meta, settings=None, platform="instagram", limit=2200):
+    settings = settings or _settings
+    fields = _fields(meta, settings, platform)
+    return _render(settings["description_template"], fields, DEFAULT_DESCRIPTION)[:limit]
+
+
+def title_text(meta, settings, platform="youtube"):
+    return _render(settings["title_template"], _fields(meta, settings, platform), "{title}")
+
+
+DEFAULT_DESCRIPTION = ("{headline}\n\n{description}\n\n🎮 {streamer_mention} live on {platform}: {stream_link}\n"
+                       "{extra_mentions}\n\n{hashtags}")
+
+
+# ------------------------------------------------------------------- cover
+COVER_SRC = DATA / "cover_source"   # the image you uploaded (any format ffmpeg reads)
+
+
+def cover_source():
+    files = sorted(DATA.glob("cover_source.*"))
+    return files[0] if files else None
+
+
+def save_cover(data: bytes, filename: str):
+    if not data or len(data) > 15 * 2**20:
+        raise ValueError("image is empty or bigger than 15 MB")
+    ext = Path(filename).suffix.lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+        raise ValueError("use a PNG, JPG or WEBP image")
+    for old in DATA.glob("cover_source.*"):
+        old.unlink()
+    path = DATA / f"cover_source{ext}"
+    path.write_bytes(data)
+    try:
+        make_cover(DATA / "cover_preview.jpg", "", settings=_settings, headline_on=False)
+    except Exception as e:
+        path.unlink(missing_ok=True)
+        raise ValueError(f"that image can't be read: {e}")
+    return path
+
+
+def make_cover(out: Path, headline: str, settings=None, headline_on=None):
+    """1080x1920 cover: your image fitted in the middle on a blurred copy of itself,
+    optionally with the clip's headline on it."""
+    from . import captions, tools
+    settings = settings or _settings
+    src = cover_source()
+    if not src:
+        return None
+    if headline_on is None:
+        headline_on = settings["cover_headline"]
+    vf = ("[0:v]split=2[a][b];[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+          "boxblur=22:2,eq=brightness=-0.18[bg];[b]scale=1080:-2:flags=lanczos[fg];"
+          "[bg][fg]overlay=(W-w)/2:(H-h)/2")
+    cwd = out.parent
+    if headline_on and headline:
+        head, events = captions.headline_events(headline, 5, 1450, settings["top_caption_style"]
+                                                if settings["top_caption_style"] in ("tiktok", "impact") else "impact")
+        (cwd / "cover.ass").write_text(
+            "[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\nWrapStyle: 2\n\n[V4+ Styles]\n"
+            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, "
+            "Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
+            "MarginL, MarginR, MarginV, Encoding\n" + head + "\n\n[Events]\nFormat: Layer, Start, End, Style, Name, "
+            "MarginL, MarginR, MarginV, Effect, Text\n" + "\n".join(e.replace("\\fad(150,0)", "") for e in events) + "\n",
+            encoding="utf-8")
+        vf += ",ass=cover.ass"
+    tools.run([tools.ffmpeg(), "-y", "-hide_banner", "-loglevel", "error", "-i", str(src.resolve()),
+               "-filter_complex", vf, "-frames:v", "1", "-q:v", "3", out.name], cwd=cwd, timeout=60)
+    (cwd / "cover.ass").unlink(missing_ok=True)
+    return out
+
+
+def _clip_cover(clip_id, meta, settings):
+    if not settings["cover_enabled"] or not cover_source():
+        return None
+    out = CLIPS / clip_id / "cover.jpg"
+    if not out.exists():
+        make_cover(out, meta.get("headline") or meta.get("title", ""), settings)
+    return out
+
+
+def _ig_video(clip_id, meta, settings):
+    """Instagram only takes a cover from a public URL, so the cover is put on the first
+    0.2 s of the video and picked as the cover frame (barely visible when playing)."""
+    from . import tools
+    path = CLIPS / clip_id / "clip_9x16.mp4"
+    cover = _clip_cover(clip_id, meta, settings)
+    if not cover:
+        return path, None
+    out = CLIPS / clip_id / "clip_ig.mp4"
+    if not out.exists():
+        tools.run([tools.ffmpeg(), "-y", "-hide_banner", "-loglevel", "error", "-i", path.name, "-loop", "1",
+                   "-t", "0.25", "-i", cover.name, "-filter_complex",
+                   "[1:v]scale=1080:1920,setsar=1,format=yuv420p[c];[0:v][c]overlay=0:0:eof_action=pass:"
+                   "enable='lt(t,0.2)'[v]", "-map", "[v]", "-map", "0:a?", *tools.video_encoder(),
+                   "-c:a", "copy", "-movflags", "+faststart", out.name], cwd=CLIPS / clip_id, timeout=600)
+    return out, 100
 
 
 def _safe(name):
@@ -167,7 +303,8 @@ def save_to_folder(clip_id, settings):
     uploads = meta.get("uploads") or {}
     links = "\n".join(f"{k}: {v.get('url')}" for k, v in uploads.items() if v.get("url"))
     (folder / f"{base}.txt").write_text(
-        f"TITLE:\n{meta.get('title', '')}\n\nHEADLINE:\n{meta.get('headline', '')}\n\nCAPTION:\n{caption_text(meta)}\n"
+        f"YOUTUBE TITLE:\n{title_text(meta, settings)}\n\nYOUTUBE DESCRIPTION:\n{caption_text(meta, settings, 'youtube', 4900)}"
+        f"\n\nINSTAGRAM CAPTION:\n{caption_text(meta, settings, 'instagram')}\n"
         + (f"\nUPLOADED:\n{links}\n" if links else ""), encoding="utf-8")
     with _lock:
         _status.setdefault(clip_id, {})["download"] = {"state": "done", "path": str(dst)}
@@ -260,11 +397,11 @@ def _yt_channel(access):
 def yt_upload(clip_id, settings):
     meta = load_meta(clip_id)
     path = CLIPS / clip_id / "clip_9x16.mp4"
-    title = (meta.get("title") or meta.get("headline") or "Stream moment").replace("<", "").replace(">", "")
+    title = (title_text(meta, settings) or meta.get("title") or "Stream moment").replace("<", "").replace(">", "")
     if "#shorts" not in title.lower() and len(title) <= 90:
         title += " #shorts"
     tags = [t.lstrip("#") for t in meta.get("hashtags") or []][:15]
-    body = {"snippet": {"title": title[:100], "description": caption_text(meta, 4900).replace("<", "").replace(">", ""),
+    body = {"snippet": {"title": title[:100], "description": caption_text(meta, settings, "youtube", 4900).replace("<", "").replace(">", ""),
                         "tags": tags, "categoryId": "20"},
             "status": {"privacyStatus": settings["yt_privacy"], "selfDeclaredMadeForKids": False}}
     access = _yt_access()
@@ -281,8 +418,20 @@ def yt_upload(clip_id, settings):
     if up.status_code not in (200, 201):
         raise RuntimeError(f"YouTube upload failed: {_err(up)}")
     vid = up.json()["id"]
-    return {"state": "done", "url": f"https://youtube.com/shorts/{vid}", "privacy": settings["yt_privacy"],
-            "at": time.time()}
+    result = {"state": "done", "url": f"https://youtube.com/shorts/{vid}", "privacy": settings["yt_privacy"],
+              "at": time.time()}
+    cover = _clip_cover(clip_id, meta, settings)
+    if cover:
+        try:
+            t = httpx.post(f"https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId={vid}",
+                           content=cover.read_bytes(), timeout=120,
+                           headers={"Authorization": f"Bearer {_yt_access()}", "Content-Type": "image/jpeg"})
+            result["thumbnail"] = "set" if t.status_code == 200 else f"not set: {_err(t)}"
+        except httpx.HTTPError as e:
+            result["thumbnail"] = f"not set: {e}"
+        if result["thumbnail"] != "set":
+            log.warning("YouTube thumbnail %s (verify your phone at youtube.com/verify)", result["thumbnail"])
+    return result
 
 
 def _err(r):
@@ -325,12 +474,14 @@ def _ig_token():
 
 def ig_upload(clip_id, settings):
     meta = load_meta(clip_id)
-    path = CLIPS / clip_id / "clip_9x16.mp4"
+    path, thumb_ms = _ig_video(clip_id, meta, settings)
     acc = _ig_token()
     token = acc["token"]
-    r = httpx.post(f"{IG_API}/me/media", timeout=60, data={
-        "media_type": "REELS", "upload_type": "resumable", "caption": caption_text(meta),
-        "share_to_feed": "true", "access_token": token})
+    form = {"media_type": "REELS", "upload_type": "resumable", "caption": caption_text(meta, settings, "instagram"),
+            "share_to_feed": "true", "access_token": token}
+    if thumb_ms is not None:
+        form["thumb_offset"] = str(thumb_ms)
+    r = httpx.post(f"{IG_API}/me/media", timeout=60, data=form)
     if r.status_code != 200 or "id" not in r.json():
         raise RuntimeError(f"Instagram refused the Reel: {_err(r)}")
     container, uri = r.json()["id"], r.json().get("uri") or f"https://rupload.facebook.com/ig-api-upload/{r.json()['id']}"

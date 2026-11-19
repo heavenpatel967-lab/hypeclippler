@@ -51,29 +51,28 @@ def video_encoder() -> list[str]:
     return ["-c:v", "libx264", "-preset", "faster", "-crf", "19", "-profile:v", "high"]
 
 
-def run(cmd, timeout=600, cwd=None, attempts=4):
-    """Runs a command. If Windows is out of memory (WinError 8) it waits and tries again
-    instead of failing the clip."""
-    import gc
+def run(cmd, timeout=600, cwd=None, max_wait=1800):
+    """Runs a command. If Windows is out of memory (WinError 8) it frees memory and waits
+    until there is room, for up to max_wait seconds, instead of failing the clip."""
     import time
-    from .resources import is_oom
-    for i in range(attempts):
+    from . import resources
+    name = Path(cmd[0]).name
+    start = time.time()
+    while True:
         try:
             p = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
                                timeout=timeout, cwd=cwd, creationflags=NO_WINDOW)
         except OSError as e:
-            if not is_oom(e) or i == attempts - 1:
-                raise RuntimeError(f"{Path(cmd[0]).name} could not start: {e}") from e
-            log.warning("out of memory starting %s, retrying in %ds", Path(cmd[0]).name, 15 * (i + 1))
-            gc.collect()
-            time.sleep(15 * (i + 1))
+            if not resources.is_oom(e) or time.time() - start > max_wait:
+                raise RuntimeError(f"{name} could not start: {e}") from e
+            log.warning("out of memory starting %s, freeing memory and waiting", name)
+            resources.wait_until_runnable(name, max_wait=max(60, max_wait - (time.time() - start)))
             continue
         if p.returncode != 0:
             err = p.stderr.strip()[-800:]
-            if is_oom(err) and i < attempts - 1:
-                log.warning("%s ran out of memory, retrying in %ds", Path(cmd[0]).name, 15 * (i + 1))
-                gc.collect()
-                time.sleep(15 * (i + 1))
+            if resources.is_oom(err) and time.time() - start < max_wait:
+                log.warning("%s ran out of memory, freeing memory and waiting", name)
+                resources.wait_until_runnable(name, max_wait=max(60, max_wait - (time.time() - start)))
                 continue
-            raise RuntimeError(f"{Path(cmd[0]).name} failed: {err}")
+            raise RuntimeError(f"{name} failed: {err}")
         return p
