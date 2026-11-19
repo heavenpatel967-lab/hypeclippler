@@ -358,6 +358,13 @@ def yt_finish(settings, code, state):
     if r.status_code != 200:
         raise ValueError(f"Google refused the login: {r.text[:200]}")
     tok = r.json()
+    granted = set((tok.get("scope") or "").split())
+    missing = [label for scope, label in (("https://www.googleapis.com/auth/youtube.upload", "Manage your YouTube videos"),
+                                          ("https://www.googleapis.com/auth/youtube.readonly", "View your YouTube account"))
+               if scope not in granted]
+    if granted and missing:
+        raise ValueError("you didn't tick: " + " and ".join(f"'{m}'" for m in missing) +
+                         ". Click Connect YouTube again and tick 'Select all' before Continue.")
     if not tok.get("refresh_token"):
         raise ValueError("Google gave no refresh token, remove the app's access in your Google account and retry")
     tok["expires_at"] = time.time() + tok.get("expires_in", 3600) - 60
@@ -406,10 +413,12 @@ def _yt_channel(access):
     try:
         r = httpx.get("https://www.googleapis.com/youtube/v3/channels", timeout=20,
                       params={"part": "snippet", "mine": "true"}, headers={"Authorization": f"Bearer {access}"})
+        if r.status_code != 200:  # e.g. permission not granted: that's not "no channel"
+            return f"? (YouTube said: {_err(r)[:120]})"
         items = r.json().get("items") or []
         return items[0]["snippet"]["title"] if items else NO_CHANNEL
-    except Exception:  # noqa: BLE001
-        return "?"
+    except Exception as e:  # noqa: BLE001
+        return f"? ({type(e).__name__})"
 
 
 def yt_upload(clip_id, settings):
