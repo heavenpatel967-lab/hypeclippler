@@ -536,7 +536,7 @@ async function loadPublish() {
   $("#dlSub").value = p.download_subfolders;
   $("#ytInfo").innerHTML = p.youtube.connected
     ? `<span style="color:var(--ok)">Connected: ${esc(p.youtube.channel)}</span>${p.youtube.email ? ` <span class="small">(${esc(p.youtube.email)})</span>` : ""}`
-    : p.youtube.signed_in ? `<span style="color:var(--bad)">Signed in as ${esc(p.youtube.email || "an account")} but it has no YouTube channel.</span> Click Disconnect, then Connect YouTube and choose the account/channel that owns your channel.`
+    : p.youtube.signed_in ? `<span style="color:var(--bad)">This login has no YouTube channel.</span> Click Disconnect, then Connect YouTube. After choosing your Gmail, Google shows "Choose an account or brand account": pick your <b>channel name</b>, not your own name.`
     : p.youtube.client ? "Client added. Click Connect YouTube." : "Not set up.";
   $("#igInfo").innerHTML = p.instagram.connected ? `<span style="color:var(--ok)">Connected: @${esc(p.instagram.username)}</span>` : "Not connected.";
 }

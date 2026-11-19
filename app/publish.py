@@ -28,8 +28,9 @@ log = logging.getLogger("publish")
 YT_CLIENT = DATA / "youtube_client.json"
 YT_TOKEN = DATA / "youtube_token.json"
 IG_TOKEN = DATA / "instagram_token.json"
-YT_SCOPES = ("openid email https://www.googleapis.com/auth/youtube.upload "
-             "https://www.googleapis.com/auth/youtube.readonly")
+# no "openid email": Brand Account channels have no email, and asking for it makes Google
+# skip the "choose a channel" screen, so you end up on the personal account without a channel
+YT_SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
 NO_CHANNEL = "(no channel on this account)"
 IG_API = "https://graph.instagram.com"
 
@@ -365,7 +366,8 @@ def yt_finish(settings, code, state):
     tok["email"] = _id_email(tok.get("id_token"))
     _write(YT_TOKEN, tok)
     if tok["channel"] == NO_CHANNEL:
-        return f"{NO_CHANNEL}: signed in as {tok['email'] or 'unknown account'}"
+        return (f"{NO_CHANNEL}. If your channel is a Brand Account, connect again and pick the channel "
+                "(not your name) on Google's 'Choose an account or brand account' screen")
     return tok["channel"]
 
 
