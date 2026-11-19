@@ -402,7 +402,10 @@ function renderQuick(s) {
       const on = !AUTO.every(k => s[k]);
       if (on && !confirm("Auto mode: every clip scored " + s.auto_upload_min_score + "/10+ is uploaded to YouTube and Instagram by itself, one every " + s.upload_gap_minutes + " min. Turn on?")) return;
       await api("/api/settings", {method: "POST", body: JSON.stringify(Object.fromEntries(AUTO.map(k => [k, on])))});
-      toast(on ? "Auto mode ON" : "Auto mode OFF"); return loadSettings();
+      const p = await api("/api/publish");
+      const missing = [!p.youtube.connected && "YouTube", !p.instagram.connected && "Instagram"].filter(Boolean);
+      toast(!on ? "Auto mode OFF" : missing.length ? `Auto mode ON, but ${missing.join(" and ")} isn't connected yet: connect it in Downloads & uploads` : "Auto mode ON");
+      return loadSettings();
     }
     if (b.dataset.mode === "reels") {
       await api("/api/settings", {method: "POST", body: JSON.stringify(REELS)});
@@ -429,7 +432,7 @@ $("#settingsForm").onsubmit = async e => {
   await loadSettings(); toast("Settings saved");
 };
 
-const UI_VERSION = "0.15.0";
+const UI_VERSION = "0.16.0";
 async function loadHealth() {
   const h = await api("/api/health");
   $("#restart").style.display = h.version === UI_VERSION ? "none" : "block";

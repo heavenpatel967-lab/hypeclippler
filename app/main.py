@@ -39,6 +39,7 @@ async def lifespan(_app):
     from . import captions
     resources.register_freer(captions.unload)
     resources.register_freer(lambda: llm.unload(settings))
+    loop.run_in_executor(None, llm.resolve, settings)  # starts Ollama if it isn't running
     if resources.page_file_small():
         log.warning("Windows page file is small: this causes WinError 8. Run fix_memory.bat once.")
     await manager.start()
