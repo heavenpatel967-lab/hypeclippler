@@ -55,3 +55,64 @@ def is_oom(exc) -> bool:
     text = str(exc).lower()
     return any(s in text for s in ("winerror 8", "not enough memory", "out of memory", "cannot allocate memory",
                                    "paging file is too small", "cuda_error_out_of_memory"))
+
+
+_freers = []
+
+
+def register_freer(fn):
+    """Functions that release memory (unload Whisper, unload the AI model...)."""
+    _freers.append(fn)
+
+
+def relieve():
+    """Frees everything we can before retrying."""
+    for fn in _freers:
+        try:
+            fn()
+        except Exception as e:  # noqa: BLE001
+            log.debug("freer failed: %s", e)
+    gc.collect()
+
+
+def commit_info():
+    """Windows: (commit limit MB, physical RAM MB). The commit limit is RAM + page file.
+    'Could not start: WinError 8' means the commit limit was reached."""
+    if os.name != "nt":
+        return None, None
+    try:
+        class MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                        ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                        ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                        ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                        ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+        st = MEMORYSTATUSEX()
+        st.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st))
+        return st.ullTotalPageFile // 2**20, st.ullTotalPhys // 2**20
+    except Exception:  # noqa: BLE001
+        return None, None
+
+
+def page_file_small():
+    """True when the page file adds less than 16 GB on top of RAM (too little for
+    several recordings + Whisper + an AI model)."""
+    limit, phys = commit_info()
+    return bool(limit and phys and limit - phys < 16 * 1024)
+
+
+def wait_until_runnable(name, on_wait=None, max_wait=1800):
+    """After an out-of-memory error: free memory, then wait until there is room again."""
+    relieve()
+    start = time.time()
+    while time.time() - start < max_wait:
+        free, _ = memory_mb()
+        if free is None or free >= 2500:
+            return True
+        if on_wait:
+            on_wait(free)
+        log.info("waiting for memory to run %s (%s MB free)", name, free)
+        time.sleep(10)
+        relieve()
+    return False

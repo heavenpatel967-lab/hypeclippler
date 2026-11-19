@@ -82,6 +82,9 @@
   <div class="badges" id="health"></div>
   <button class="danger" id="stopApp" title="Stops all recordings and closes HypeClipper">⏻ Stop app</button>
 </header>
+<div id="pagefile" style="display:none;background:#ff9f1c;color:#000;font-weight:600;padding:10px 24px;text-align:center">
+  Windows' page file is too small for HypeClipper. This is what causes "WinError 8 / not enough memory".
+  Fix it once: double-click <b>fix_memory.bat</b> in the HypeClipper folder, click Yes, then restart your PC.</div>
 <main>
   <div class="quick" id="quick"></div>
   <form class="add" id="addForm">
@@ -150,6 +153,7 @@
   </form>
 </main>
 <div class="toast" id="toast"></div>
+
 <div class="modal" id="camModal"><div class="box">
   <b id="camTitle">Webcam box</b>
   <div class="small">Drag a rectangle around the streamer's webcam. Clips then use the facecam layout: webcam on top, gameplay below.</div>
@@ -388,10 +392,11 @@ $("#settingsForm").onsubmit = async e => {
   await loadSettings(); toast("Settings saved");
 };
 
-const UI_VERSION = "0.13.0";
+const UI_VERSION = "0.14.0";
 async function loadHealth() {
   const h = await api("/api/health");
   $("#restart").style.display = h.version === UI_VERSION ? "none" : "block";
+  $("#pagefile").style.display = h.page_file_small ? "block" : "none";
   $("#health").innerHTML = [
     h.ram_free_mb != null ? `<span class="badge ${h.ram_free_mb < 3000 ? "bad" : "ok"}" title="Free memory. Below 3 GB, clips wait instead of crashing. Close Chrome tabs or watch fewer streamers.">RAM free: ${(h.ram_free_mb / 1024).toFixed(1)} / ${(h.ram_total_mb / 1024).toFixed(0)} GB</span>` : "",
     h.streamers ? `<span class="badge" title="Estimated download speed needed for all recordings">${h.streamers} streamers ≈ ${h.bandwidth_mbps} Mbps</span>` : "",

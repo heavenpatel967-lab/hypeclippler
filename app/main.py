@@ -36,6 +36,11 @@ async def lifespan(_app):
     loop.run_in_executor(None, tools.video_encoder)  # warm up the check
     loop.run_in_executor(None, sfx.ensure_library)   # built-in sound effects + sfx folders
     publish.start(settings)
+    from . import captions
+    resources.register_freer(captions.unload)
+    resources.register_freer(lambda: llm.unload(settings))
+    if resources.page_file_small():
+        log.warning("Windows page file is small: this causes WinError 8. Run fix_memory.bat once.")
     await manager.start()
     yield
     await manager.shutdown()
@@ -148,6 +153,8 @@ async def health():
     free, total = resources.memory_mb()
     workers = list(manager.workers.values())
     hi = sum(1 for w in workers if w.recorder.quality().startswith("1080"))
+    limit, phys = resources.commit_info()
+    out.update(page_file_small=resources.page_file_small(), commit_limit_mb=limit)
     out.update(ram_free_mb=free, ram_total_mb=total, streamers=len(workers),
                bandwidth_mbps=hi * 7 + (len(workers) - hi) * 4)
     info = await asyncio.to_thread(llm.resolve, settings)

@@ -288,7 +288,13 @@ The header shows free RAM and the internet speed all recordings need. If a card 
 "⚠ video dropped", that recording is missing pieces (choppy clips): your internet or PC can't keep
 up, so watch fewer streamers.
 
-If it still happens: let Windows manage the page file size (Settings > System > About > Advanced
+If it still happens, double-click **`fix_memory.bat`** once (click Yes), then restart the PC. It
+turns on "Automatically manage paging file size", so Windows can grow the page file instead of
+refusing to start programs. The dashboard shows an orange bar when the page file is too small.
+When memory runs out anyway, the app now frees Whisper and the AI model and waits up to 30
+minutes for room instead of failing the clip.
+
+Manual way: let Windows manage the page file size (Settings > System > About > Advanced
 system settings > Performance > Advanced > Virtual memory > "Automatically manage"), close
 other heavy apps, or set Whisper model to `small`.
 
