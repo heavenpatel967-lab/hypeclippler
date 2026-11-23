@@ -194,6 +194,14 @@ its uploads are finished.
 Watch the first few uploads before leaving it alone. Uploading other streamers' content without
 permission can get copyright strikes; see the Copyright note.
 
+### Updating (always use update.bat)
+
+Double-click **`update.bat`** in your HypeClipper folder. It stops HypeClipper, downloads the
+newest version from GitHub into the **same folder**, keeps `data` (settings, streamers,
+YouTube/Instagram logins, cover image, clips) and your sounds, and starts it again. Don't unzip
+new versions into a new folder: the new folder has an empty `data` folder, so streamers and
+logins seem to disappear. The header shows the running version (e.g. `v0.18.0`).
+
 ### Starting, stopping, restarting
 
 - **Stop**: click **⏻ Stop app** in the dashboard header, or double-click `stop.bat` (also frees
