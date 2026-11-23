@@ -4,9 +4,9 @@ rem Keeps your data (settings, streamers, YouTube/Instagram logins, cover, clips
 cd /d "%~dp0"
 title HypeClipper update
 echo Stopping HypeClipper...
-powershell -NoProfile -Command "try { Invoke-WebRequest -UseBasicParsing -Method Post http://127.0.0.1:8000/api/shutdown -TimeoutSec 5 | Out-Null } catch {}"
+powershell -NoProfile -Command "try { Invoke-WebRequest -UseBasicParsing -Method Post http://127.0.0.1:8765/api/shutdown -TimeoutSec 5 | Out-Null } catch {}"
 timeout /t 3 >nul
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr :8000 ^| findstr LISTENING') do taskkill /F /T /PID %%a >nul 2>nul
+for %%p in (8000 8765) do for /f "tokens=5" %%a in ('netstat -ano ^| findstr :%%p ^| findstr LISTENING') do taskkill /F /T /PID %%a >nul 2>nul
 echo Downloading the newest version...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference='Stop';" ^
