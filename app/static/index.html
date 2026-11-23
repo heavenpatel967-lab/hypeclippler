@@ -182,7 +182,7 @@
   <div class="row"><button class="primary" id="camSave">Save</button><button id="camReload">New snapshot</button>
     <button class="danger" id="camClear">Remove webcam box</button><button id="camClose" style="margin-left:auto">Close</button></div>
 </div></div>
-<div id="restart" style="display:none;position:fixed;top:0;left:0;right:0;background:#ff5c5c;color:#000;font-weight:700;padding:10px 24px;z-index:9;text-align:center">HypeClipper was updated but the old version is still running. <button id="stopOld" style="margin-left:8px">Stop old version</button> then double-click start.bat again.</div>
+<div id="restart" style="display:none;position:fixed;top:0;left:0;right:0;background:#ff5c5c;color:#000;font-weight:700;padding:10px 24px;z-index:9;text-align:center">HypeClipper's page and engine are different versions. Press <b>Ctrl+F5</b> first. If this bar stays, close HypeClipper and double-click <b>update.bat</b>.</div>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -432,7 +432,7 @@ $("#settingsForm").onsubmit = async e => {
   await loadSettings(); toast("Settings saved");
 };
 
-const UI_VERSION = "0.18.0";
+const UI_VERSION = "0.19.0";
 async function loadHealth() {
   const h = await api("/api/health");
   const cmp = (a, b) => { const x = String(a).split(".").map(Number), y = String(b).split(".").map(Number);
@@ -441,6 +441,7 @@ async function loadHealth() {
   $("#restart").style.display = h.version === UI_VERSION ? "none" : "block";
   $("#pagefile").style.display = h.page_file_small ? "block" : "none";
   $("#health").innerHTML = [
+    `<span class="badge" title="Engine version / page version">v${esc(h.version)}${h.version === UI_VERSION ? "" : " (page " + UI_VERSION + ")"}</span>`,
     h.ram_free_mb != null ? `<span class="badge ${h.ram_free_mb < 3000 ? "bad" : "ok"}" title="Free memory. Below 3 GB, clips wait instead of crashing. Close Chrome tabs or watch fewer streamers.">RAM free: ${(h.ram_free_mb / 1024).toFixed(1)} / ${(h.ram_total_mb / 1024).toFixed(0)} GB</span>` : "",
     h.streamers ? `<span class="badge" title="Estimated download speed needed for all recordings">${h.streamers} streamers ≈ ${h.bandwidth_mbps} Mbps</span>` : "",
     h.ffmpeg ? `<span class="badge ok">ffmpeg ✓</span>` : `<span class="badge bad">ffmpeg missing</span>`,
@@ -598,7 +599,7 @@ $("#tplSave").onclick = async () => {
 loadBranding();
 loadPublish(); setInterval(loadPublish, 30000); setInterval(() => { // refresh upload progress, but never while you're watching a clip
   if ([...document.querySelectorAll(".clip video")].some(v => !v.paused)) return;
-  clipIds = ""; loadClips(); }, 15000); $("#stopOld").onclick = stopApp;
+  clipIds = ""; loadClips(); }, 15000);
 
 loadSettings(); loadHealth(); refresh(); loadClips(); loadSounds();
 setInterval(refresh, 1500);
