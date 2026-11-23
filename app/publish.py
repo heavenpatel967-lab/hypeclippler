@@ -558,68 +558,173 @@ def connected():
 
 
 # ------------------------------------------------------------- the worker
+# ------------------------------------------------------------- the workers
+# One queue + worker per platform, so YouTube's spacing never holds up Instagram or saving.
+# A catch-up loop re-reads every clip each minute: clips that should be uploaded but aren't
+# (after a restart, after connecting Instagram later, after "Keep it") are queued again.
+PLATFORMS = ("youtube", "instagram")
+AUTO_KEY = {"youtube": "auto_upload_youtube", "instagram": "auto_upload_instagram"}
+MAX_TRIES = 4
+_queues = {p: queue.PriorityQueue() for p in PLATFORMS}
+_queued: set = set()          # (clip_id, platform) currently in a queue or uploading
+_seq = [0]
+_kick = threading.Event()     # wakes the catch-up loop early
+_next_at = {p: 0.0 for p in PLATFORMS}
+
+
+def _upload_state(meta, platform):
+    return ((meta.get("uploads") or {}).get(platform) or {})
+
+
+def eligible(meta, settings, platform, conn=None):
+    """Should this clip be auto-uploaded to this platform (and isn't yet)?"""
+    conn = conn or connected()
+    if not settings[AUTO_KEY[platform]] or not conn[platform]["connected"]:
+        return False
+    st = _upload_state(meta, platform)
+    if st.get("state") == "done" or st.get("tries", 0) >= MAX_TRIES:
+        return False
+    if settings["upload_every_clip"]:
+        return True
+    if meta.get("approved"):
+        return True  # you clicked "Keep it"
+    if meta.get("low_score") or meta.get("manual"):
+        return False
+    return (meta.get("clip_score") or 0) >= settings["auto_upload_min_score"]
+
+
+def _put(clip_id, platform, manual=False):
+    key = (clip_id, platform)
+    with _lock:
+        if key in _queued:
+            return False
+        _queued.add(key)
+        _seq[0] += 1
+        _status.setdefault(clip_id, {})[platform] = {"state": "waiting to upload"}
+    _queues[platform].put((0 if manual else 1, _seq[0], clip_id, manual))
+    return True
+
+
 def enqueue(clip_id, platforms, manual=False):
     for p in platforms:
-        with _lock:
-            _status.setdefault(clip_id, {})[p] = {"state": "waiting"}
-    _q.put((clip_id, list(platforms), manual))
+        _put(clip_id, p, manual)
 
 
 def on_clip_ready(meta, settings):
-    """Called when a clip is finished: queues auto uploads, then auto download/delete."""
-    score = meta.get("clip_score") or 0
-    if meta.get("low_score"):
-        return  # waits for your review on the dashboard
-    good = score >= settings["auto_upload_min_score"] and not meta.get("manual")
-    platforms = [p for p, key in (("youtube", "auto_upload_youtube"), ("instagram", "auto_upload_instagram"))
-                 if settings[key] and good and connected()[p]["connected"]]
-    if platforms or settings["auto_download"]:
-        _q.put((meta["id"], platforms, False))
-        for p in platforms:
-            with _lock:
-                _status.setdefault(meta["id"], {})[p] = {"state": "waiting"}
+    _kick.set()  # the catch-up loop queues uploads / saves it right away
 
 
-def _worker():
+def _daily_reset_wait():
+    """Seconds until YouTube's quota resets (midnight Pacific time, about UTC-8)."""
+    now = time.time()
+    return 86400 - ((now - 8 * 3600) % 86400) + 120
+
+
+def _platform_worker(platform):
     while True:
-        clip_id, platforms, manual = _q.get()
+        _, _, clip_id, manual = _queues[platform].get()
         s = _settings
         try:
-            if not (CLIPS / clip_id / "meta.json").exists():
+            meta = load_meta(clip_id)
+            if not meta:
                 continue
-            for p in platforms:
-                gap = s["upload_gap_minutes"] * 60
-                wait = _last_upload[p] + gap - time.time()
-                if wait > 0 and not manual:  # spacing so the channel doesn't look like spam
-                    _save_upload_result(clip_id, p, {"state": f"waiting {int(wait // 60) + 1} min (upload spacing)"})
-                    time.sleep(wait)
-                _save_upload_result(clip_id, p, {"state": "uploading"})
-                try:
-                    res = UPLOADERS[p](clip_id, s)
-                    _last_upload[p] = time.time()
-                    log.info("uploaded %s to %s: %s", clip_id, p, res.get("url"))
-                except Exception as e:  # noqa: BLE001
-                    log.warning("%s upload of %s failed: %s", p, clip_id, e)
-                    res = {"state": "failed", "error": str(e)[:300]}
-                _save_upload_result(clip_id, p, res)
-            if not manual and s["auto_download"]:
-                save_to_folder(clip_id, s)
-                if s["delete_after_download"]:
-                    from .clipper import delete_clip
-                    delete_clip(clip_id)
-                    with _lock:
-                        _status.pop(clip_id, None)
+            wait = _next_at[platform] - time.time()
+            if wait > 0 and not manual:  # spacing so the channel doesn't look like spam
+                _save_upload_result(clip_id, platform, {**_upload_state(meta, platform),
+                                                        "state": f"next upload in {int(wait // 60) + 1} min"})
+                time.sleep(wait)
+            tries = _upload_state(meta, platform).get("tries", 0) + 1
+            _save_upload_result(clip_id, platform, {"state": "uploading", "tries": tries})
+            try:
+                res = UPLOADERS[platform](clip_id, s)
+                _next_at[platform] = time.time() + s["upload_gap_minutes"] * 60
+                log.info("uploaded %s to %s: %s", clip_id, platform, res.get("url"))
+                _save_upload_result(clip_id, platform, {**res, "tries": tries})
+            except Exception as e:  # noqa: BLE001
+                msg = str(e)[:300]
+                low = msg.lower()
+                log.warning("%s upload of %s failed (try %d): %s", platform, clip_id, tries, msg)
+                if "quota" in low or "uploadlimitexceeded" in low or "daily limit" in low:
+                    # daily limit reached: wait for the reset, then carry on (doesn't count as a try)
+                    wait = _daily_reset_wait() if platform == "youtube" else 3600
+                    _next_at[platform] = time.time() + wait
+                    _save_upload_result(clip_id, platform, {"state": f"daily limit reached, retrying in "
+                                                            f"{wait / 3600:.1f} h", "tries": tries - 1, "error": msg})
+                elif tries >= MAX_TRIES or "not connected" in low or "no youtube channel" in low:
+                    _save_upload_result(clip_id, platform, {"state": "failed", "tries": MAX_TRIES, "error": msg})
+                else:
+                    _next_at[platform] = max(_next_at[platform], time.time() + 120 * tries)  # back off
+                    _save_upload_result(clip_id, platform, {"state": f"failed, retrying ({tries}/{MAX_TRIES})",
+                                                            "tries": tries, "error": msg})
         except Exception as e:  # noqa: BLE001
-            log.warning("publish job for %s failed: %s", clip_id, e)
+            log.warning("%s job for %s failed: %s", platform, clip_id, e)
         finally:
-            _q.task_done()
+            with _lock:
+                _queued.discard((clip_id, platform))
+            _kick.set()
+
+
+def _finish(meta, settings, conn):
+    """Auto download (and delete) once every upload this clip needs is finished."""
+    if not settings["auto_download"] or meta.get("saved"):
+        return
+    for p in PLATFORMS:
+        if (meta["id"], p) in _queued or eligible(meta, settings, p, conn):
+            return  # still uploading / will be uploaded
+    if meta.get("low_score") and not settings["upload_every_clip"]:
+        return  # waits for your review
+    path = save_to_folder(meta["id"], settings)
+    if settings["delete_after_download"]:
+        from .clipper import delete_clip
+        delete_clip(meta["id"])
+        with _lock:
+            _status.pop(meta["id"], None)
+    else:
+        mp = _meta_path(meta["id"])
+        m = _read(mp)
+        if m:
+            m["saved"] = str(path)
+            _write(mp, m)
+
+
+def catch_up():
+    s = _settings
+    conn = connected()
+    from .clipper import list_clips
+    for meta in reversed(list_clips()):  # oldest first
+        try:
+            for p in PLATFORMS:
+                if eligible(meta, s, p, conn):
+                    _put(meta["id"], p)
+            _finish(meta, s, conn)
+        except Exception as e:  # noqa: BLE001
+            log.warning("catch-up for %s failed: %s", meta.get("id"), e)
+
+
+def _catch_up_loop():
+    while True:
+        try:
+            catch_up()
+        except Exception as e:  # noqa: BLE001
+            log.warning("catch-up failed: %s", e)
+        _kick.wait(60)
+        _kick.clear()
+
+
+def retry(clip_id, platform):
+    """Manual retry of a failed upload: resets the try counter."""
+    _save_upload_result(clip_id, platform, {"state": "waiting to upload", "tries": 0})
+    _put(clip_id, platform, manual=True)
 
 
 def start(settings):
     global _settings
     _settings = settings
-    threading.Thread(target=_worker, name="publish", daemon=True).start()
+    for p in PLATFORMS:
+        threading.Thread(target=_platform_worker, args=(p,), name=f"upload-{p}", daemon=True).start()
+    threading.Thread(target=_catch_up_loop, name="upload-catch-up", daemon=True).start()
 
 
 def pending():
-    return _q.qsize()
+    return {p: {"waiting": _queues[p].qsize(), "next_in_min": max(0, round((_next_at[p] - time.time()) / 60))}
+            for p in PLATFORMS}

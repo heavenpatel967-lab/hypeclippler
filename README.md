@@ -181,6 +181,16 @@ Dashboard > **Branding**:
 - at least **20 minutes** passed since the last auto upload there (Settings), so the channel
   doesn't look like spam. ✂ Clip now clips are never auto-uploaded; use the buttons on the card.
 
+**📤 Upload every clip** (quick switch) uploads *all* clips: no score limit, and review and
+✂ Clip now clips too.
+
+The upload queue never loses clips: each minute it checks every clip on the dashboard and
+queues the ones that should be uploaded but aren't (after a restart, after connecting a
+platform, after "Keep it"). Failed uploads retry up to 4 times; when YouTube's daily limit is
+reached it waits for the reset (midnight Pacific time) and continues. YouTube and Instagram
+have separate queues. With "Delete after download", a clip is only saved and removed once all
+its uploads are finished.
+
 Watch the first few uploads before leaving it alone. Uploading other streamers' content without
 permission can get copyright strikes; see the Copyright note.
 
