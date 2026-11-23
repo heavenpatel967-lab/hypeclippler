@@ -72,7 +72,8 @@ class Facecam(BaseModel):
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    # never cached: after an update the browser must load the new dashboard
+    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-store, must-revalidate"})
 
 
 @app.get("/api/status")
