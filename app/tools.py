@@ -76,3 +76,27 @@ def run(cmd, timeout=600, cwd=None, max_wait=1800):
                 continue
             raise RuntimeError(f"{name} failed: {err}")
         return p
+
+
+def grab_frame(media, t, out, width=768, cwd=None, duration=None):
+    """Saves one JPG frame. Uses full-range colours (the JPG encoder rejects the video's
+    limited range on some ffmpeg builds: 'Error while opening encoder') and, if the time
+    is past the end of the video (no frame written), tries earlier times.
+    Returns True when the file exists."""
+    out = Path(out)
+    target = out if (out.is_absolute() or cwd is None) else Path(cwd) / out
+    tries = [t, t - 1.0, 0.5] if t > 1.5 else [max(0.0, t), 0.0]
+    if duration:
+        tries = [min(x, max(0.0, duration - 0.6)) for x in tries]
+    for x in tries:
+        target.unlink(missing_ok=True)
+        try:
+            run([ffmpeg(), "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{max(0.0, x):.2f}", "-i", str(media),
+                 "-frames:v", "1", "-vf", f"scale={width}:-2:flags=lanczos,format=yuvj420p", "-q:v", "3",
+                 "-strict", "unofficial", str(out)], timeout=60, cwd=cwd, max_wait=120)
+        except RuntimeError as e:
+            log.debug("frame at %.1fs failed: %s", x, e)
+            continue
+        if target.exists() and target.stat().st_size > 0:
+            return True
+    return False

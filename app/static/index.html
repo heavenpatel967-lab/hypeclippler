@@ -432,7 +432,7 @@ $("#settingsForm").onsubmit = async e => {
   await loadSettings(); toast("Settings saved");
 };
 
-const UI_VERSION = "0.19.0";
+const UI_VERSION = "0.19.1";
 async function loadHealth() {
   const h = await api("/api/health");
   const cmp = (a, b) => { const x = String(a).split(".").map(Number), y = String(b).split(".").map(Number);

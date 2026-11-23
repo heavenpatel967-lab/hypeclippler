@@ -35,12 +35,8 @@ def extract_frames(media: Path, times, out_dir: Path, width=768):
     frames = []
     for i, t in enumerate(times):
         path = out_dir / f"frame_{i}.jpg"
-        try:
-            tools.run([tools.ffmpeg(), "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{t:.2f}", "-i",
-                       str(media), "-frames:v", "1", "-vf", f"scale={width}:-2", "-q:v", "4", str(path)], timeout=60)
+        if tools.grab_frame(media, t, path, width):  # only frames that really exist
             frames.append((t, path))
-        except Exception as e:  # noqa: BLE001
-            log.debug("frame at %.1fs failed: %s", t, e)
     return frames
 
 
@@ -48,6 +44,9 @@ def describe(settings, frames, topic, streamer):
     """[{time, what}] or [] if no vision model is available."""
     info = llm.resolve(settings)
     if not info["model"] or not info["vision"] or not frames:
+        return []
+    frames = [(t, p) for t, p in frames if p.exists()]
+    if not frames:
         return []
     images = [base64.b64encode(p.read_bytes()).decode() for _, p in frames]
     listing = "\n".join(f"image {i + 1}: {t:.1f}s" for i, (t, _) in enumerate(frames))

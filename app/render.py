@@ -128,4 +128,5 @@ def video_filter(g, src, cam_box=None, punch_times=None, fps=30.0):
 def snapshot(segment_path, out_path):
     """A still frame of the live stream (for picking the webcam box)."""
     tools.run([tools.ffmpeg(), "-y", "-hide_banner", "-loglevel", "error", "-i", str(segment_path),
-               "-frames:v", "1", "-vf", "scale=960:-2", "-q:v", "3", str(out_path)], timeout=30)
+               "-frames:v", "1", "-vf", "scale=960:-2,format=yuvj420p", "-q:v", "3", "-strict", "unofficial",
+               str(out_path)], timeout=30)
