@@ -210,9 +210,14 @@ def _process(job_id, streamer, moment, settings, manual, force=False):
                 _set(job_id, state="watching the clip (AI vision)")
                 if low:
                     captions.unload()
-                frames = scenes.extract_frames(full, scenes.key_times(moments, duration, 4 if low else 6),
-                                               out_dir, 640 if low else 768)
-                scenes_found = scenes.describe(settings, frames, topic, streamer.channel_name)
+                frames = []
+                try:  # AI vision is a bonus: if it fails, the clip is still made
+                    frames = scenes.extract_frames(full, scenes.key_times(moments, duration - 1, 4 if low else 6),
+                                                   out_dir, 640 if low else 768)
+                    scenes_found = scenes.describe(settings, frames, topic, streamer.channel_name)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("AI vision skipped for this clip: %s", e)
+                    scenes_found = []
                 for _, f in frames:
                     f.unlink(missing_ok=True)
 
@@ -337,8 +342,8 @@ def _process(job_id, streamer, moment, settings, manual, force=False):
             if not ws:
                 sounds = []
             thumb_t = strongest[0]["t"] if strongest else clip_len / 2
-            tools.run([ff, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{min(thumb_t, clip_len - 0.5):.2f}",
-                       "-i", "clip_9x16.mp4", "-frames:v", "1", "-vf", "scale=360:-2", "thumb.jpg"], cwd=out_dir)
+            if not tools.grab_frame("clip_9x16.mp4", thumb_t, "thumb.jpg", 360, cwd=out_dir, duration=clip_len):
+                log.warning("no thumbnail for %s (the clip itself is fine)", job_id)
 
         meta = {
             "id": job_id,

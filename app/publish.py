@@ -192,7 +192,8 @@ def make_cover(out: Path, headline: str, settings=None, headline_on=None):
             encoding="utf-8")
         vf += ",ass=cover.ass"
     tools.run([tools.ffmpeg(), "-y", "-hide_banner", "-loglevel", "error", "-i", str(src.resolve()),
-               "-filter_complex", vf, "-frames:v", "1", "-q:v", "3", out.name], cwd=cwd, timeout=60)
+               "-filter_complex", vf + ",format=yuvj420p", "-frames:v", "1", "-q:v", "3", "-strict", "unofficial",
+               out.name], cwd=cwd, timeout=60)
     (cwd / "cover.ass").unlink(missing_ok=True)
     return out
 
