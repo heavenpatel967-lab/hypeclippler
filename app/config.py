@@ -89,7 +89,7 @@ DEFAULTS = {
     "cover_headline": False,         # write the clip's headline on the cover
     # web dashboard
     "host": "127.0.0.1",
-    "port": 8000,
+    "port": 8765,                # not 8000, so an old HypeClipper can never get in the way
     "streamers": [],
 }
 

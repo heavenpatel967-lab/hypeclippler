@@ -22,7 +22,7 @@ Everything runs on your PC. No API keys, no subscriptions, no usage limits.
 2. Double-click **`start.bat`**.
    - The first run installs ffmpeg (through winget). Close the window and run `start.bat` again.
    - The second run installs the Python packages, which takes a few minutes. Then the dashboard
-     opens at http://localhost:8000.
+     opens at http://localhost:8765.
 3. *(Recommended)* Free local AI that **watches the clip** and writes specific captions, titles
    and sound choices:
    - Install Ollama from https://ollama.com/download
