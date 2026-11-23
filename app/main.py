@@ -139,6 +139,7 @@ def get_settings():
 @app.post("/api/settings")
 def save_settings(values: dict):
     settings.update(values)
+    publish._kick.set()  # e.g. Auto mode just turned on: queue waiting clips now
     return settings.public()
 
 
@@ -306,7 +307,7 @@ def upload_clip(clip_id: str, platform: str):
         raise HTTPException(400, "unknown platform")
     if not publish.connected()[platform]["connected"]:
         raise HTTPException(400, f"connect {platform} first (Uploads section)")
-    publish.enqueue(clip_id, [platform], manual=True)
+    publish.retry(clip_id, platform)
     return {"ok": True}
 
 

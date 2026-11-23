@@ -377,7 +377,7 @@ const QUICK = [
   ["burn_hook", "📝 Headline/top captions"], ["word_captions", "💬 Word captions"], ["chat_box_enabled", "🗨 Chat box"],
   ["auto_facecam", "🎥 Auto webcam"], ["smart_trim", "✂ AI best cut"],
   ["auto_download", "⬇ Auto download"], ["delete_after_download", "🗑 Delete after download"],
-  ["auto_upload_youtube", "▶ Auto YouTube"], ["auto_upload_instagram", "📷 Auto Instagram"],
+  ["auto_upload_youtube", "▶ Auto YouTube"], ["auto_upload_instagram", "📷 Auto Instagram"], ["upload_every_clip", "📤 Upload every clip"],
 ];
 const EFFECTS = ["sfx_enabled", "sfx_intro_whoosh", "zoom_punch"];
 const AUTO = ["auto_download", "auto_upload_youtube", "auto_upload_instagram"];
@@ -432,7 +432,7 @@ $("#settingsForm").onsubmit = async e => {
   await loadSettings(); toast("Settings saved");
 };
 
-const UI_VERSION = "0.16.0";
+const UI_VERSION = "0.17.0";
 async function loadHealth() {
   const h = await api("/api/health");
   $("#restart").style.display = h.version === UI_VERSION ? "none" : "block";
@@ -532,12 +532,16 @@ $("#stopApp").onclick = stopApp;
 
 async function loadPublish() {
   const p = await api("/api/publish");
+  const q = p.queue || {};
+  $("#ytInfo").dataset.q = q.youtube ? `${q.youtube.waiting} waiting to upload${q.youtube.next_in_min ? ", next in " + q.youtube.next_in_min + " min" : ""}` : "";
   $("#dlInfo").innerHTML = `Saving to: <b>${esc(p.download_folder)}</b>${p.download_default ? " (default)" : ""}`;
   $("#dlSub").value = p.download_subfolders;
   $("#ytInfo").innerHTML = p.youtube.connected
     ? `<span style="color:var(--ok)">Connected: ${esc(p.youtube.channel)}</span>${p.youtube.email ? ` <span class="small">(${esc(p.youtube.email)})</span>` : ""}`
     : p.youtube.signed_in ? `<span style="color:var(--bad)">This login has no YouTube channel.</span> Click Disconnect, then Connect YouTube. After choosing your Gmail, Google shows "Choose an account or brand account": pick your <b>channel name</b>, not your own name.`
     : p.youtube.client ? "Client added. Click Connect YouTube." : "Not set up.";
+  if (p.youtube.connected && $("#ytInfo").dataset.q) $("#ytInfo").innerHTML += `<div class="small">${esc($("#ytInfo").dataset.q)}</div>`;
+  if (p.instagram.connected && q.instagram) $("#igInfo").innerHTML += `<div class="small">${q.instagram.waiting} waiting to upload</div>`;
   $("#igInfo").innerHTML = p.instagram.connected ? `<span style="color:var(--ok)">Connected: @${esc(p.instagram.username)}</span>` : "Not connected.";
 }
 $("#openDl").onclick = () => api("/api/downloads/open", {method:"POST"});

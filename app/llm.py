@@ -199,7 +199,8 @@ def unload(settings):
 
 
 def _extract_json(text):
-    text = re.sub(r"```(?:json)?", "", text or "")
+    text = re.sub(r"<think>.*?(</think>|$)", "", text or "", flags=re.S)  # thinking models
+    text = re.sub(r"```(?:json)?", "", text)
     try:
         return json.loads(text)
     except ValueError:

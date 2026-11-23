@@ -76,6 +76,7 @@ DEFAULTS = {
     "auto_upload_youtube": False,
     "auto_upload_instagram": False,
     "auto_upload_min_score": 7,      # only clips the AI scored this high are uploaded automatically
+    "upload_every_clip": False,      # upload ALL clips: no score limit, review and manual clips too
     "upload_gap_minutes": 20,        # minimum time between two automatic uploads per platform
     "yt_privacy": "public",          # public | unlisted | private
     # branding for uploads ({title} {headline} {description} {streamer} {streamer_mention}
